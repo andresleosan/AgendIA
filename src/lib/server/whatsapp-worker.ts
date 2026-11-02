@@ -54,6 +54,7 @@ async function generateOne(db: Firestore) {
     });
     if (!inbox) continue;
     const operation = registerWhatsAppOperation(inbox, db, 180_000);
+    const executionDeadlineAt = Date.now() + 180000;
     try {
       if (!await activeNumber(inbox, db) || !await conversationAllowsReply(inbox, db)) throw new Error('Conversation paused');
       const source = inboundContentSchema.parse(decryptWhatsApp(inbox.content, reference.path));
@@ -61,8 +62,8 @@ async function generateOne(db: Firestore) {
       const messages = [...history, { role: 'user' as const, content: source.text }];
       while (messages.length > 20 || messages.reduce((sum, item) => sum + item.content.length, 0) > 60_000) messages.shift();
       await runSarinChat({ user: { uid: `wa_${whatsappHash(inbox.businessId, source.from)}`, phone: `+${source.from}`, ...(source.name ? { name: source.name } : {}) },
-        body: { mode: 'sarin_client', tenantId: inbox.businessId, requestId: candidate.id, messages }, channel: 'whatsapp', signal: operation.signal,
-        onResponse: (response, reservation) => persistWhatsAppReply(candidate.id, leaseId, response, reservation, db),
+        body: { mode: 'sarin_client', tenantId: inbox.businessId, requestId: candidate.id, messages }, channel: 'whatsapp', signal: operation.signal, executionDeadlineAt,
+        onResponse: (response, reservation, identity) => persistWhatsAppReply(candidate.id, leaseId, response, reservation, db, identity),
       });
     } catch {
       // Never log customer text, credentials or upstream errors. An outbox written

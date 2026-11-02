@@ -5,6 +5,7 @@ import { Send } from 'lucide-react';
 import { SarinMark } from '@/components/sarin-brand';
 import { BusinessContactLinks } from '@/components/business-contact-links';
 import { BusinessFactualFaqPanel } from '@/components/business-factual-faq-panel';
+import { ResponseQuotaNotice } from '@/components/response-quota';
 import { AuthGate, useAuth } from '@/components/auth-provider';
 import { ConsentPanel, useAccountConsent } from '@/components/consent-panel';
 import { useConsent } from '@/hooks/useConsent';
@@ -44,6 +45,7 @@ function GeneralBookingChat({ business, uid, permitted, faqEnabled, now, onConfi
     {!available && <Notice>La atención de IA está temporalmente en pausa. Puedes consultar y cancelar tus citas o contactar directamente al establecimiento.</Notice>}
     {engine.health?.status === 'offline' && <Notice>SarinBot no puede responder en este momento. <button className="min-h-11 text-sarin-blue underline" disabled={engine.checking} onClick={() => void engine.refresh()}>Comprobar conexión</button></Notice>}
     <p className="text-sm">Soy SarinBot, el asistente de {business.name}. Cuéntame qué servicio necesitas y cuándo te gustaría venir.</p>
+    <ResponseQuotaNotice />
     <BusinessFactualFaqPanel businessId={business.id} uid={uid} enabled={faqEnabled} />
     <div aria-live="polite" className="space-y-4">
       {chat.messages.map(message => <div key={message.id} className={`whitespace-pre-wrap break-words rounded-2xl p-4 text-sm leading-relaxed ${message.role === 'user' ? 'ml-8 bg-sarin-blue text-white' : 'mr-5 border border-sarin-line bg-sarin-canvas text-sarin-ink'}`}>{message.content}</div>)}

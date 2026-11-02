@@ -4,9 +4,10 @@ import { createCloudflareDatabase, StorageError } from '@/lib/storage/database';
 import type { DataReadResult, DataCommitResult } from '../shared/data-protocol';
 import type { Database } from '@/lib/storage/types';
 import type { Business } from '@/types/firestore';
+import { seedQuotaProtocol } from './response-quota-fixtures';
 const state = vi.hoisted(() => ({ db: undefined as unknown, engine: vi.fn() }));
 vi.mock('@/lib/firebase/admin', () => ({ getAdminDb: () => state.db }));
-vi.mock('@/lib/sarin/engine', async original => ({ ...await original<typeof import('@/lib/sarin/engine')>(), completeChat: state.engine }));
+vi.mock('@/lib/sarin/engine', async original => ({ ...await original<typeof import('@/lib/sarin/engine')>(), completeChat: async (...args: Parameters<typeof import('@/lib/sarin/engine')['completeChat']>) => { await args[2]?.beforeDispatch?.({ provider: 'ollama', providerCallId: null }); return state.engine(...args); } }));
 import { runSarinChat } from '@/lib/server/chat';
 import { confirmBookingProposal } from '@/lib/server/booking-proposals';
 import { cancelAppointment } from '@/lib/server/bookings';
@@ -23,7 +24,7 @@ describe('commercial pilot abuse contract on real local D1', () => {
     db = createCloudflareDatabase(async command => {
       const response = await runtime.fetch(command), value = await response.json() as DataReadResult | DataCommitResult;
       if (!response.ok) throw new StorageError(response.status, (value as unknown as { code: string }).code); return value;
-    }); state.db = db;
+    }); state.db = db; await seedQuotaProtocol(db);
   }, 30000);
   afterAll(async () => { await runtime?.dispose(); vi.unstubAllEnvs(); });
   it.each(['payment', 'invitation'] as const)('keeps five historical appointments and %s trial usage through interpretation, explicit confirmation, replay and cancellation', async source => {

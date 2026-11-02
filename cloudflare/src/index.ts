@@ -1,4 +1,5 @@
 import { cleanupAdminPaymentRetention } from './admin-payment-retention.ts';
+import { recoverWorkerResponseQuota } from './response-quota-recovery.ts';
 import { cleanupPlatformSupportRetention } from './platform-support-retention.ts';
 import { hasPotentialPlatformWork } from './platform-whatsapp-wake.ts';
 import { handlePlatformAudioOutbound } from './platform-whatsapp-audio.ts';
@@ -54,6 +55,10 @@ export default {
   async scheduled(_controller: ScheduledController, env: CloudflareBindings): Promise<void> {
     const flags: Record<string, unknown> = { ...env };
     if (flags.SARIN_MAINTENANCE !== 'true') {
+      try {
+        const quota = await recoverWorkerResponseQuota(env);
+        if (quota.visited) console.info({ event: 'response_quota_recovery', ...quota });
+      } catch { console.error({ event: 'response_quota_recovery_failed' }); }
       const result = await cleanupAdminPaymentRetention(env);
       if (result.morePending || result.clearedBodies || result.deletedMetadata) console.info({ event: 'admin_payment_retention', ...result });
       if (flags.PLATFORM_WHATSAPP_RETENTION_ENABLED !== 'true') {

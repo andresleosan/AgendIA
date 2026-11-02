@@ -37,6 +37,19 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Firestore rules on real e
     });
   });
   afterAll(async () => { await environment?.cleanup(); });
+  it('denies quota attempts receipts and reconciliation reviews to every raw browser SDK', async () => {
+    const paths = ['responseQuotaTurns/demo-turn', 'responseQuotaReceipts/demo-receipt', 'responseQuotaTurns/demo-turn/reviews/demo-review'];
+    await environment.withSecurityRulesDisabled(async context => {
+      for (const path of paths) await setDoc(doc(context.firestore(), path), { version: 2 });
+    });
+    for (const context of [environment.unauthenticatedContext(), ...['owner-one', 'customer', 'staff', 'stale-admin'].map(uid => environment.authenticatedContext(uid, { isSuperadmin: true }))]) {
+      for (const path of paths) {
+        const db = context.firestore(), ref = doc(db, path);
+        await assertFails(getDoc(ref)); await assertFails(getDocs(collection(db, path.split('/').slice(0, -1).join('/'))));
+        await assertFails(setDoc(ref, { version: 2 })); await assertFails(updateDoc(ref, { version: 3 })); await assertFails(deleteDoc(ref));
+      }
+    }
+  });
   it('denies all owner reschedule proofs to browser SDKs while moved appointment reads remain authorized', async () => {
     const appointment = { client: { uid: 'customer' }, dateKey: '2030-01-07', status: 'confirmed', rescheduleRevision: 1, lastRescheduleProposalId: 'synthetic-proof', rescheduledAt: 1 };
     await environment.withSecurityRulesDisabled(async context => {

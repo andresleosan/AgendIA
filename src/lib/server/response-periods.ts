@@ -1,14 +1,10 @@
 import 'server-only';
-import { z } from 'zod';
 import type { Database as Firestore, Transaction } from '@/lib/storage/types';
 import type { Business, ResponseQuotaPeriod } from '@/types/firestore';
-import { SUBSCRIPTION_PLAN_IDS } from '@/lib/billing-plans';
 import { PAID_TRIAL_INCLUDED_RESPONSES, PAID_TRIAL_PERIOD_END } from '@/lib/paid-trial';
 
-export type StoredResponsePeriod = Omit<ResponseQuotaPeriod, 'remainingResponses'>;
-const count = z.number().int().min(0).max(1_000_000_000);
-const periodSchema = z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), source: z.enum(['trial', 'subscription', 'legacy']), planId: z.enum(SUBSCRIPTION_PLAN_IDS).nullable(), startsAt: z.number().int().nonnegative(), endsAt: z.number().int().nonnegative(), includedResponses: count, extraResponses: count, usedResponses: count, reservedResponses: count });
-export function parseResponsePeriod(value: unknown): StoredResponsePeriod { return periodSchema.parse(value); }
+import { parseResponsePeriod, type StoredResponsePeriod } from '../../../shared/response-quota-records';
+export { parseResponsePeriod, type StoredResponsePeriod } from '../../../shared/response-quota-records';
 export const businessQuotaScope = (businessId: string) => `business_${businessId}`;
 export const responsePeriodReference = (db: Firestore, scopeId: string, periodId: string) => db.collection('responseQuotaScopes').doc(scopeId).collection('periods').doc(periodId);
 export function publicResponsePeriod(period: StoredResponsePeriod): ResponseQuotaPeriod {

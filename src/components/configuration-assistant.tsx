@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Send } from 'lucide-react';
 import { buttonClass, fieldClass, Notice } from '@/components/app-shell';
 import { SarinMark } from '@/components/sarin-brand';
+import { ResponseQuotaNotice } from '@/components/response-quota';
 import { ConfigurationDifferences } from '@/components/owner-configuration-workspace';
 import { useDebouncedChat } from '@/hooks/useDebouncedChat';
 import { configurationDifferences, configurationFingerprint, mergeOwnerConfigurationProposal } from '@/lib/owner-configuration';
@@ -28,6 +29,7 @@ export function ConfigurationAssistant({ uid, business, enabled, draft, busy, on
   return <section className="min-w-0 space-y-4 rounded-2xl border border-sarin-line bg-sarin-paper p-4" aria-label="Preparar configuración con Sarin">
     <h2 className="flex items-center gap-2 text-lg font-semibold"><SarinMark className="h-8 w-8" />Preparar con Sarin</h2>
     <p className="text-sm text-sarin-muted">Describe tus servicios, precios, personas o estaciones y horarios. Sarin prepara una propuesta que puedes revisar y copiar al borrador. Después debes guardar la configuración.</p>
+    <ResponseQuotaNotice />
     <div aria-live="polite" className="max-h-[28rem] space-y-3 overflow-auto">{chat.messages.map(message => <p key={message.id} className={`whitespace-pre-wrap break-words rounded-xl p-3 text-sm ${message.role === 'user' ? 'bg-sarin-soft' : 'bg-sarin-canvas'}`}>{message.content}</p>)}{(chat.isGenerating || chat.isWaitingBatch) && <p role="status">Sarin está preparando tu configuración…</p>}{chat.error && <div className="space-y-2"><Notice error={!chat.requestAlreadyCompleted}>{chat.error}</Notice>{!chat.requestAlreadyCompleted && <button type="button" className={buttonClass} onClick={chat.retry} disabled={!enabled || chat.isGenerating}>{chat.quotaExhausted ? 'Comprobar disponibilidad' : 'Reintentar mensaje'}</button>}</div>}</div>
     {chat.configurationDraft && <button type="button" className={buttonClass} disabled={!enabled || busy || chat.isGenerating} onClick={() => { prepareReview(); setChangedSinceReview(false); }}>Revisar propuesta</button>}
     {preview && <section className="space-y-3" aria-label="Revisión de propuesta"><h3 className="font-semibold">Revisa los cambios propuestos</h3><p className="text-sm text-sarin-muted">Usar la propuesta solo cambia el borrador; todavía no publica tus datos.</p>{changedSinceReview && <p role="alert">El borrador cambió desde la revisión. Revisa las diferencias actualizadas antes de usar la propuesta.</p>}<ConfigurationDifferences differences={configurationDifferences(draft, preview.next)} /><button type="button" className={buttonClass} disabled={!enabled || busy || chat.isGenerating} onClick={apply}>Usar propuesta en el borrador</button></section>}

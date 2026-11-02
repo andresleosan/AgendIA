@@ -1,13 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Business } from '@/types/firestore';
-import { reserveResponseQuota, commitResponseQuota, releaseResponseQuota, getResponseQuota } from '@/lib/server/response-quota';
+import { reserveResponseQuota as reserveQuota, commitResponseQuota as completeQuota, releaseResponseQuota, getResponseQuota } from '@/lib/server/response-quota';
+import { markResponseQuotaDispatch } from '@/lib/server/response-quota-store';
+import { quotaProtocolEntries } from './response-quota-fixtures';
 import { memoryFirestore } from './memoryFirestore';
 
 const now = Date.parse('2030-01-01T12:00:00Z');
 const day = 86400000;
 const business: Business = { id: 'business', ownerUid: 'owner', ownerEmail: 'owner@example.test', name: 'Fixture', category: 'Services', phoneWhatsApp: '573001234567', timezone: 'America/Bogota', slug: 'fixture', subscription: { status: 'trial', trialEndsAt: 0, currentPeriodEndsAt: 0, paidTrial: { paymentId: 'approved', activatedAt: now, appointmentLimit: 10, appointmentsUsed: 0 } }, sarinConfig: { onboardingCompleted: true, tone: '', customRules: '', intakeFields: [] }, resources: [], services: [], weeklySchedule: {}, createdAt: now };
 const input = { businessId: 'business', actorUid: 'client', mode: 'sarin_client' as const, channel: 'web' as const, requestId: 'request-one', fingerprint: 'a'.repeat(64) };
-const memory = () => memoryFirestore({ 'businesses/business': business as unknown as Record<string, unknown> });
+const memory = () => memoryFirestore({ ...quotaProtocolEntries, 'businesses/business': business as unknown as Record<string, unknown> });
+const reserveResponseQuota: typeof reserveQuota = (input, db, authorize) => reserveQuota(input, db, authorize, { deadlineAt: Date.now() + 300000 });
+const commitResponseQuota: typeof completeQuota = async (reservation, response, db) => {
+  const saved = (await db!.collection('responseQuotaTurns').doc(reservation.reservationId).get()).data()!;
+  if (saved.status === 'reserved' && !saved.execution?.mayHaveDispatched) await markResponseQuotaDispatch(reservation, saved.fingerprint, { providerCallId: null }, db);
+  return completeQuota(reservation, response, db);
+};
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(now); });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -65,7 +73,7 @@ describe('response quota reservations', () => {
   it('does not reset a trial through reads, grace, or an owner configuration change', async () => {
     const { db, rows } = memory();
     expect((await getResponseQuota('business', db)).currentPeriod?.includedResponses).toBe(700);
-    expect(rows.size).toBe(1);
+    expect(rows.size).toBe(2);
     const first = await reserveResponseQuota(input, db);
     await commitResponseQuota(first.reservation, undefined, db);
     vi.setSystemTime(now + 8 * day);
@@ -116,6 +124,7 @@ describe('response quota reservations', () => {
     await releaseResponseQuota(released.reservation, db);
     await expect(commitResponseQuota(released.reservation, undefined, db)).rejects.toMatchObject({ status: 409 });
     const inFlight = await reserveResponseQuota({ ...input, requestId: 'long-response' }, db);
+    await markResponseQuotaDispatch(inFlight.reservation, input.fingerprint, { providerCallId: null }, db);
     vi.setSystemTime(now + 8 * day);
     await db.collection('businesses').doc('business').set({ ...business, subscription: { ...business.subscription, paidTrial: { ...business.subscription.paidTrial!, appointmentsUsed: 10 } } });
     await commitResponseQuota(inFlight.reservation, undefined, db);

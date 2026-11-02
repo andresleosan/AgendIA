@@ -50,6 +50,16 @@ describe("chat pause surfaces", () => {
   afterEach(async () => { await act(async () => renderer?.unmount()); vi.unstubAllGlobals(); });
   const modeButton = (label: string) => renderer.root.findAllByType('button').find(button => text(button) === label);
   async function chooseChat() { const button = modeButton('Hablar con SarinBot'); expect(button).toBeDefined(); await act(async () => button!.props.onClick()); }
+  it('explains started-response consumption next to the client chat input', async () => {
+    await act(async () => { renderer = create(createElement(Suspense, { fallback: null }, createElement(ClientPage, { params: Promise.resolve({ slug: 'fixture' }) }))); });
+    await chooseChat();
+    expect(text(renderer.root)).toContain('Una respuesta de IA ya iniciada puede consumir una respuesta del plan aunque no llegue a mostrarse');
+  });
+  it('explains started-response consumption in configuration assistance', async () => {
+    const business = { ...state.business!, weeklySchedule: Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, { isOpen: false, intervals: [] }])) };
+    await act(async () => { renderer = create(createElement(ConfigurationAssistant, { uid: state.user.uid, business, enabled: true, busy: false, draft: createOwnerConfigurationDraft(business), onDraft: vi.fn() })); });
+    expect(text(renderer.root)).toContain('Una respuesta de IA ya iniciada puede consumir una respuesta del plan aunque no llegue a mostrarse');
+  });
   it.each(['+12345678', '12345678', '1234-5678'])('publishes only exact business phone links in the signed-in booking screen: %s', async phoneWhatsApp => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ business: { id: 'fixture-business', name: 'Negocio sintético', phoneWhatsApp, services: [], subscription: state.publicSubscription } })));
     await act(async () => { renderer = create(createElement(Suspense, { fallback: null }, createElement(ClientPage, { params: Promise.resolve({ slug: 'fixture' }) }))); });

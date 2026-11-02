@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memoryFirestore } from './memoryFirestore';
+import { seedQuotaProtocol } from './response-quota-fixtures';
 const state = vi.hoisted(() => ({ db: undefined as unknown, complete: vi.fn(), queue: vi.fn() }));
 vi.mock('@/lib/firebase/admin', () => ({ getAdminDb: () => state.db }));
-vi.mock('@/lib/sarin/engine', async original => ({ ...await original<typeof import('@/lib/sarin/engine')>(), completeChat: state.complete }));
+vi.mock('@/lib/sarin/engine', async original => ({ ...await original<typeof import('@/lib/sarin/engine')>(), completeChat: async (...args: Parameters<typeof import('@/lib/sarin/engine')['completeChat']>) => { await args[2]?.beforeDispatch?.({ provider: 'ollama', providerCallId: null }); return state.complete(...args); } }));
 vi.mock('@/lib/sarin/queue', () => ({ runInSarinQueue: state.queue }));
 import { runSarinChat } from '@/lib/server/chat';
 import { createAppointment, cancelAppointment, createManualBlock } from '@/lib/server/bookings';
@@ -98,6 +99,7 @@ describe('consent before new processing', () => {
 
   it('rechecks consent when queued work starts and preserves exact cached reads after revocation', async () => {
     const { db, rows } = memoryFirestore({ [`businesses/${business.id}`]: { ...business } }); state.db = db; await allow(db);
+    await seedQuotaProtocol(db);
     const body = { mode: 'sarin_client' as const, tenantId: business.id, requestId: 'queued-turn', messages: [{ role: 'user' as const, content: 'Servicios' }] };
     state.queue.mockImplementationOnce(async job => { await updateConsent(client, { scope: 'business_client', businessId: business.id, action: 'revoke', requestId: 'queued-revoke', expectedRevision: 1 }, db); return job(); });
     await expect(runSarinChat({ user: client, body })).rejects.toMatchObject({ code: 'CONSENT_REQUIRED' });

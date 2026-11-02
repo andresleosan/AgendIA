@@ -5,6 +5,7 @@ vi.mock('@/lib/sarin/engine', async original => ({ ...await original<typeof impo
 vi.mock('@/lib/sarin/queue', () => ({ runInSarinQueue: state.queue }));
 vi.mock('@/lib/server/provider-settings', () => ({ getAiProviderSelection: state.provider }));
 import { memoryFirestore } from './memoryFirestore';
+import { seedQuotaProtocol } from './response-quota-fixtures';
 import { subjectFixture, subjectAdmin, verifyStructuredCases } from './represented-booking-contract';
 import { acceptSyntheticConsent } from './consent-fixtures';
 import { businessIdForOwner } from '@/lib/server/businesses';
@@ -34,6 +35,7 @@ it('adult haircut represented haircut and pediatrics finish without any inferenc
 });
 it('rechecks policy after provider selection immediately before dispatch', async () => {
   const { db } = memoryFirestore(); state.db = db; const f = await subjectFixture(db, 'general', false);
+  await seedQuotaProtocol(db);
   state.provider.mockImplementationOnce(async () => { await saveBookingDataPolicy(subjectAdmin, { businessId: f.business.id, expectedRevision: 1, dataMode: 'health', representedMinorsEnabled: false, reason: 'Demo dispatch race' }, db); return { provider: 'deepseek' }; });
   await expect(runSarinChat({ user: f.actor, body: { mode: 'sarin_client', tenantId: f.business.id, requestId: 'demo-before-dispatch', messages: [{ role: 'user', content: 'SYNTHETIC_PRIVATE_SUBJECT' }] } })).rejects.toMatchObject({ code: 'STRUCTURED_BOOKING_REQUIRED' });
   expect(state.engine).not.toHaveBeenCalled();

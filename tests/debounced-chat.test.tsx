@@ -339,8 +339,8 @@ describe("debounced authenticated chat lifecycle", () => {
     expect(JSON.parse(String(vi.mocked(apiFetch).mock.calls[2][1]?.body)).stateVersion).toBeUndefined();
   });
 
-  it("does not retry an already completed turn and permits a new request", async () => {
-    vi.mocked(apiFetch).mockRejectedValueOnce(Object.assign(new Error("Esta solicitud ya fue atendida"), { status: 409, code: "REQUEST_ALREADY_COMPLETED" }));
+  it.each(["REQUEST_ALREADY_COMPLETED", "AI_RESPONSE_INTERRUPTED"])("does not retry a terminal turn and permits a new request: %s", async code => {
+    vi.mocked(apiFetch).mockRejectedValueOnce(Object.assign(new Error("Esta solicitud ya terminó"), { status: 409, code }));
     await mount();
     act(() => chat.sendMessage("Reserva original"));
     await advance();

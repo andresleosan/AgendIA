@@ -20,7 +20,12 @@ import { reviewPayment, submitReceipt } from '@/lib/server/billing';
 import { businessConfigSchema, receiptSchema } from '@/lib/server/schemas';
 import { readAdminAiUsage, recordAiUsage } from '@/lib/server/ai-usage';
 import type { EngineUsageObservation } from '@/lib/sarin/engine';
-import { reserveResponseQuota, commitResponseQuota, releaseResponseQuota, getResponseQuota } from '@/lib/server/response-quota';
+import { reserveResponseQuota as reserveQuota, commitResponseQuota, releaseResponseQuota, getResponseQuota } from '@/lib/server/response-quota';
+import { markResponseQuotaDispatch } from '@/lib/server/response-quota-store';
+import { seedQuotaProtocol } from './response-quota-fixtures';
+async function reserveResponseQuota(input: Parameters<typeof reserveQuota>[0], db: Parameters<typeof reserveQuota>[1]) {
+  await seedQuotaProtocol(db!); return reserveQuota(input, db, undefined, { deadlineAt: Date.now() + 300000 });
+}
 import { ingestWhatsAppWebhook, persistWhatsAppReply, cleanupWhatsAppRetention, getWhatsAppUsage, whatsappHash } from '@/lib/server/whatsapp-store';
 import { syntheticWhatsAppEnv, inbound, phoneId, wabaId } from './whatsapp-fixtures';
 import { verifyInvitationLifecycle } from './invitation-contract';
@@ -292,10 +297,12 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('real Firestore serializab
       const due = await db.collection('whatsappInbox').where('nextAttemptAt', '<=', Date.now()).orderBy('nextAttemptAt').limit(10).get();
       expect(due.docs.some(document => document.id === id)).toBe(true);
       const quota = await reserveResponseQuota({ businessId: business.id, actorUid: 'wa-synthetic-actor', mode: 'sarin_client', channel: 'whatsapp', requestId: id, fingerprint: 'b'.repeat(64) }, db);
+      await markResponseQuotaDispatch(quota.reservation, 'b'.repeat(64), { providerCallId: null }, db);
+      const identity = { quotaTurnId: quota.reservation.reservationId, expectedFingerprint: 'b'.repeat(64), expectedScopeId: quota.reservation.scopeId, reservation: quota.reservation };
       await db.collection('whatsappInbox').doc(id).update({ state: 'processing', leaseId: 'fixture-lease' });
       const response = { reply: 'Synthetic durable reply' };
-      await persistWhatsAppReply(id, 'fixture-lease', response, quota.reservation, db);
-      await persistWhatsAppReply(id, 'fixture-lease', response, quota.reservation, db);
+      await persistWhatsAppReply(id, 'fixture-lease', response, quota.reservation, db, identity);
+      await persistWhatsAppReply(id, 'fixture-lease', response, quota.reservation, db, identity);
       await commitResponseQuota(quota.reservation, undefined, db);
       await commitResponseQuota(quota.reservation, undefined, db);
       const status = { object: 'whatsapp_business_account', entry: [{ id: wabaId, changes: [{ field: 'messages', value: {
@@ -455,6 +462,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('real Firestore serializab
     const index = results.findIndex(result => result.status === 'fulfilled');
     const successful = results[index];
     if (successful.status !== 'fulfilled') throw new Error('Expected one successful reservation');
+    await markResponseQuotaDispatch(successful.value.reservation, request.fingerprint, { providerCallId: null }, db);
     await commitResponseQuota(successful.value.reservation, undefined, db);
     expect(await reserveResponseQuota(inputs[index], db)).toMatchObject({ kind: 'replay', response: null });
     expect(await getResponseQuota(business.id, db)).toMatchObject({ state: 'exhausted', currentPeriod: { usedResponses: 700, reservedResponses: 0, remainingResponses: 0 } });

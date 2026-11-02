@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Business } from '../src/types/firestore';
 import { consentedFirestore } from './consent-fixtures';
-const memoryFirestore = (initial: Parameters<typeof consentedFirestore>[0] = {}) => consentedFirestore(initial, ['client', 'owner', 'wa_verified']);
+import { quotaProtocolEntries } from './response-quota-fixtures';
+const memoryFirestore = (initial: Parameters<typeof consentedFirestore>[0] = {}) => consentedFirestore({ ...quotaProtocolEntries, ...initial }, ['client', 'owner', 'wa_verified']);
 const state = vi.hoisted(() => ({ db: undefined as unknown, complete: vi.fn(), whatsappReady: false }));
 vi.mock('../src/lib/firebase/admin', () => ({ getAdminDb: () => state.db }));
 vi.mock('../src/lib/server/whatsapp-config', () => ({ getWhatsAppBusinessStatus: async () => ({ ready: state.whatsappReady }) }));
@@ -9,11 +10,13 @@ vi.mock('../src/lib/server/auth', async () => {
   const { HttpError } = await import('../src/lib/server/http');
   return { requireUser: async (request: Request) => { if (!request.headers.has('authorization')) throw new HttpError(401, 'Login'); return { uid: 'client', email: 'client@example.test', name: 'Cliente' }; } };
 });
-vi.mock('../src/lib/sarin/engine', async original => ({ ...await original<typeof import('../src/lib/sarin/engine')>(), completeChat: state.complete }));
+vi.mock('../src/lib/sarin/engine', async original => ({ ...await original<typeof import('../src/lib/sarin/engine')>(), completeChat: async (...args: unknown[]) => { await (args[2] as { beforeDispatch?: (context: { provider: 'ollama'; providerCallId: null }) => Promise<void> })?.beforeDispatch?.({ provider: 'ollama', providerCallId: null }); return state.complete(...args); } }));
 import { POST } from '../src/app/api/sarin/chat/route';
 import { createAppointment, cancelAppointment } from '../src/lib/server/bookings';
 import { businessIdForOwner, stableDocumentId } from '../src/lib/server/businesses';
-import { getResponseQuota, reserveResponseQuota, commitResponseQuota } from '../src/lib/server/response-quota';
+import { getResponseQuota, reserveResponseQuota as reserveQuota } from '../src/lib/server/response-quota';
+import { finishResponseQuota } from '../src/lib/server/response-quota-store';
+const reserveResponseQuota: typeof reserveQuota = (input, db, authorize) => reserveQuota(input, db, authorize, { deadlineAt: Date.now() + 300000 });
 import { createHash } from 'node:crypto';
 import { runSarinChat } from '../src/lib/server/chat';
 import { HttpError } from '../src/lib/server/http';
@@ -160,7 +163,7 @@ describe('current authorized business information', () => {
     expect(data).toMatchObject({ code }); expect(data).not.toHaveProperty('reply');
     expect(JSON.stringify(data)).not.toContain('Dirección anterior');
     expect(state.complete).toHaveBeenCalledTimes(1);
-    expect((await getResponseQuota('business')).currentPeriod).toMatchObject({ usedResponses: 0, reservedResponses: 0 });
+    expect((await getResponseQuota('business')).currentPeriod).toMatchObject({ usedResponses: 1, reservedResponses: 0 });
     expect(memory.rows.get('businesses/business')?.version).toBe(1);
     expect([...memory.rows.keys()].some(path => path.startsWith('bookingProposals/') || path.includes('/appointments/'))).toBe(false);
   });
@@ -256,13 +259,13 @@ describe('authorized closed business chat', () => {
     const fingerprint = createHash('sha256').update(JSON.stringify({ mode: body.mode, tenantId: body.tenantId, messages: body.messages })).digest('hex');
     const quota = await reserveResponseQuota({ actorUid: 'client', businessId: 'business', mode: body.mode, channel: 'web', requestId: body.requestId, fingerprint });
     const appointment = await createAppointment({ uid: 'client' }, 'business', { dateKey: '2030-01-07', startTimeStr: '09:00', serviceId: 'cut', resourceId: 'chair', clientPhone: '573001234567', intakeAnswers: {} }, stableDocumentId(body.requestId, 'crear_cita'), memory.db);
-    await commitResponseQuota(quota.reservation); await cancelAppointment({ uid: 'client' }, 'business', appointment.id, memory.db);
+    await finishResponseQuota(quota.reservation, true, memory.db, { kind: 'appointment', id: appointment.id }); await cancelAppointment({ uid: 'client' }, 'business', appointment.id, memory.db);
     const response = await POST(request()); expect(response.status).toBe(200); expect((await response.json()).reply).toMatch(/cancelada/i); expect(state.complete).not.toHaveBeenCalled();
     expect((await memory.db.collection('businesses').doc('business').get()).data()?.subscription.paidTrial.appointmentsUsed).toBe(10);
   });
-  it('releases commercial response on engine failure and denies exhausted quota before the provider', async () => {
+  it('consumes a possibly started response on engine failure and denies exhausted quota before the provider', async () => {
     state.complete.mockRejectedValue(new Error('offline')); expect((await POST(request())).status).toBe(503);
-    expect((await getResponseQuota('business')).currentPeriod).toMatchObject({ usedResponses: 0, reservedResponses: 0 });
+    expect((await getResponseQuota('business')).currentPeriod).toMatchObject({ usedResponses: 1, reservedResponses: 0 });
     const db = state.db as ReturnType<typeof memoryFirestore>['db'];
     const periods = await db.collection('responseQuotaScopes').doc('business_business').collection('periods').get();
     await db.collection('responseQuotaScopes').doc('business_business').collection('periods').doc(periods.docs[0].id).set({ ...periods.docs[0].data(), usedResponses: 3000 });
@@ -286,13 +289,13 @@ describe('authorized closed business chat', () => {
     await db.collection('responseQuotaScopes').doc('business_business').collection('periods').doc('paid').set({ id: 'paid', source: 'subscription', planId: 'whatsapp', startsAt: now - 1000, endsAt: now + 86400000, includedResponses: 100, extraResponses: 0, usedResponses: 0, reservedResponses: 0 });
     return db;
   }
-  it('releases a reply cancelled by human control and does not replay its cached response', async () => {
+  it('consumes a started reply cancelled by human control without another inference', async () => {
     await enableWhatsAppPeriod(); state.complete.mockResolvedValue(interpretation());
     const input = { user: { uid: 'wa_verified', phone: '573009876543' }, body, channel: 'whatsapp' as const };
     await expect(runSarinChat({ ...input, onResponse: async () => { throw new HttpError(409, 'Control changed', 'WHATSAPP_CONTROL_CHANGED'); } })).rejects.toMatchObject({ code: 'WHATSAPP_CONTROL_CHANGED' });
-    expect((await getResponseQuota('business')).currentPeriod).toMatchObject({ usedResponses: 0, reservedResponses: 0, remainingResponses: 100 });
-    await runSarinChat({ ...input, onResponse: async () => {} });
-    expect(state.complete).toHaveBeenCalledTimes(2);
+    expect((await getResponseQuota('business')).currentPeriod).toMatchObject({ usedResponses: 1, reservedResponses: 0, remainingResponses: 99 });
+    await expect(runSarinChat({ ...input, onResponse: async () => {} })).rejects.toMatchObject({ code: 'REQUEST_ALREADY_COMPLETED' });
+    expect(state.complete).toHaveBeenCalledTimes(1);
     expect((await getResponseQuota('business')).currentPeriod).toMatchObject({ usedResponses: 1, reservedResponses: 0 });
   });
   it('retains quota and cached output when durable WhatsApp persistence is ambiguous', async () => {

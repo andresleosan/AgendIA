@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { consentedFirestore } from './consent-fixtures';
-const memoryFirestore = (initial: Parameters<typeof consentedFirestore>[0] = {}) => consentedFirestore(initial, ['admin', 'client', 'owner']);
+import { quotaProtocolEntries } from './response-quota-fixtures';
+const memoryFirestore = (initial: Parameters<typeof consentedFirestore>[0] = {}) => consentedFirestore({ ...quotaProtocolEntries, ...initial }, ['admin', 'client', 'owner']);
 const state = vi.hoisted(() => ({ db: null as unknown }));
 vi.mock('@/lib/firebase/admin', () => ({ getAdminDb: () => state.db }));
 import { completeChat } from '@/lib/sarin/engine';

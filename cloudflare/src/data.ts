@@ -1,5 +1,6 @@
 import { isAdminPaymentRecord } from '../../shared/admin-payment-actions.ts';
 import { isSupportRecord, isSupportRecipient } from '../../shared/platform-support-records.ts';
+import { quotaTurnSchema, quotaReceiptSchema, quotaReviewSchema, quotaProtocolSchema, quotaReceiptId } from '../../shared/response-quota-records.ts';
 import type { DataCommand, DataRead, DataReadResult, DataCommitResult, DataRecord } from '../../shared/data-protocol.ts';
 import { isDataJson, isDataPath } from '../../shared/data-protocol.ts';
 import { SINGLETON_NAME } from './router.ts';
@@ -77,11 +78,15 @@ function validateCommand(command: unknown): asserts command is DataCommand {
   for (const write of command.writes) {
     if (!object(write)) throw invalid();
     path(write.path, true);
-    if (write.op === 'delete') { keys(write, ['op', 'path']); if (['adminPaymentActions/key_marker', 'platformSupportConversations/key_marker'].includes(write.path)) throw invalid(); continue; }
+    if (write.op === 'delete') { keys(write, ['op', 'path']); if (['adminPaymentActions/key_marker', 'platformSupportConversations/key_marker', 'serverSettings/responseQuotaProtocol'].includes(write.path) || write.path.startsWith('responseQuotaReceipts/') || /^responseQuotaTurns\/[^/]+\/reviews\//.test(write.path)) throw invalid(); continue; }
     if (typeof write.op !== 'string' || !['set', 'create'].includes(write.op)) throw invalid();
     keys(write, write.op === 'set' ? ['op', 'path', 'data', 'merge'] : ['op', 'path', 'data']);
     if (!object(write.data) || !isDataJson(write.data) || (write.merge !== undefined && typeof write.merge !== 'boolean')) throw invalid();
     if (encoder.encode(JSON.stringify(write.data)).length > MAX_DOCUMENT) throw limit();
+    if (write.path.startsWith('responseQuotaReceipts/') && (write.op !== 'create' || !quotaReceiptSchema.safeParse(write.data).success)) throw invalid();
+    if (/^responseQuotaTurns\/[^/]+\/reviews\//.test(write.path) && (write.op !== 'create' || !quotaReviewSchema.safeParse(write.data).success)) throw invalid();
+    if (/^responseQuotaTurns\/[^/]+$/.test(write.path) && write.data.execution !== undefined && (write.merge || !quotaTurnSchema.safeParse(write.data).success || write.data.reservationId !== write.path.split('/')[1])) throw invalid();
+    if (write.path === 'serverSettings/responseQuotaProtocol' && (write.merge || !quotaProtocolSchema.safeParse(write.data).success)) throw invalid();
     if (/^payment(?:Images|Receipts)\//.test(write.path) && Object.hasOwn(write.data, 'receiptDataUrl')) receipt(write.data.receiptDataUrl);
     if (write.path.startsWith('businessLogos/')) {
       if (typeof write.data.businessId !== 'string' || !/^[A-Za-z0-9_-]{1,60}$/.test(write.data.businessId) || typeof write.data.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(write.data.sha256) || write.path !== `businessLogos/${write.data.businessId}_${write.data.sha256}` || typeof write.data.ownerUid !== 'string' || !write.data.ownerUid || write.data.ownerUid.length > 256 || !Number.isSafeInteger(write.data.createdAt) || Number(write.data.createdAt) < 0) throw invalid();
@@ -203,8 +208,12 @@ async function commitCommand(command: Extract<DataCommand, { action: 'commit' }>
   const replay = await journal(command, fingerprint, env);
   if (replay) return replay;
   // Read prior values for deep merge; the following CAS aborts if anything changed.
-  const paths = [...new Set(command.writes.map(write => write.path))];
-  const previous = paths.length ? await env.SARIN_DB.batch(paths.map(path => env.SARIN_DB.prepare('SELECT path,data,blob FROM app_documents WHERE path=?').bind(path))) : [];
+  const paths = [...new Set([...command.writes.map(write => write.path), ...(command.writes.some(write => write.path.startsWith('responseQuota')) ? ['serverSettings/responseQuotaProtocol'] : [])])];
+  const previous = await env.SARIN_DB.batch([...paths.map(path => env.SARIN_DB.prepare('SELECT path,data,blob FROM app_documents WHERE path=?').bind(path)), env.SARIN_DB.prepare('SELECT revision FROM app_revision WHERE id=1')]);
+  const readRevision = previous.pop()?.results[0] as { revision: number } | undefined;
+  if (!readRevision || !Number.isSafeInteger(readRevision.revision) || readRevision.revision < 0) throw new DataError(503, 'DATA_UNAVAILABLE');
+  // Validate stateful fences against the same revision as their read snapshot.
+  if (readRevision?.revision !== command.expectedRevision) throw new DataError(409, 'DATA_CONFLICT');
   const state = new Map<string, { data: DataRecord; blob: string | null }>();
   for (const result of previous) {
     const row = result.results[0] as StoredDocument | undefined;
@@ -216,6 +225,20 @@ async function commitCommand(command: Extract<DataCommand, { action: 'commit' }>
     env.SARIN_DB.prepare('UPDATE app_revision SET revision=? WHERE id=1').bind(command.expectedRevision + 1),
   ];
   for (const write of command.writes) {
+    if (write.path.startsWith('responseQuotaReceipts/') && write.op !== 'delete' && write.path !== `responseQuotaReceipts/${await quotaReceiptId(quotaReceiptSchema.parse(write.data))}`) throw invalid();
+    if (/^responseQuotaTurns\/[^/]+$/.test(write.path)) {
+      if (write.op === 'delete') throw invalid();
+      const cutoff = state.get('serverSettings/responseQuotaProtocol');
+      if (cutoff && (!quotaProtocolSchema.safeParse(cutoff.data).success || !quotaTurnSchema.safeParse(write.data).success || !write.data.execution || write.merge)) throw invalid();
+      const oldTurn = state.get(write.path)?.data;
+      if (oldTurn?.execution && write.data.execution && oldTurn.attemptId === write.data.attemptId) {
+        const old = quotaTurnSchema.parse(oldTurn), next = quotaTurnSchema.parse(write.data);
+        if (old.status !== 'reserved' && stable(old) !== stable(next)) throw invalid();
+        if (old.execution!.mayHaveDispatched && !next.execution!.mayHaveDispatched) throw invalid();
+        if (next.execution!.fenceRevision < old.execution!.fenceRevision) throw invalid();
+      }
+    }
+    if (write.path === 'serverSettings/responseQuotaProtocol' && write.op !== 'delete' && state.has(write.path) && stable(state.get(write.path)!.data) !== stable(write.data)) throw invalid();
     if (write.op === 'delete') {
       state.delete(write.path);
       statements.push(env.SARIN_DB.prepare('DELETE FROM app_documents WHERE path=?').bind(write.path));

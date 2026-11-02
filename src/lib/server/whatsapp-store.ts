@@ -9,6 +9,7 @@ import type { ResponseQuotaReservation } from './response-quota';
 import { bindingReady, metaIdSchema, parseWhatsAppBinding, readWhatsAppConfig } from './whatsapp-config';
 import { decryptWhatsApp, encryptWhatsApp, type WhatsAppCiphertext } from './whatsapp-security';
 import { HttpError } from './http';
+import { prepareQuotaResult, applyResponseQuotaStage, readQuotaPublication, type QuotaIdentity, type QuotaStage } from './response-quota-store';
 import { appendConversationControl, cancelSupersededWhatsAppOperations, conversationContactSchema, conversationPermitsReply, parseConversationMetadata } from './whatsapp-conversations';
 export { getWhatsAppConversations, setWhatsAppConversationMode, whatsAppConversationControlSchema } from './whatsapp-conversations';
 
@@ -245,7 +246,7 @@ export async function claimWhatsAppOutbox(id: string, db: Firestore): Promise<bo
   });
 }
 
-export async function persistWhatsAppReply(id: string, leaseId: string, response: ChatResponse, reservation: ResponseQuotaReservation, db: Firestore): Promise<void> {
+export async function persistWhatsAppReply(id: string, leaseId: string, response: ChatResponse, reservation: ResponseQuotaReservation, db: Firestore, identity?: QuotaIdentity): Promise<void> {
   const reference = db.collection('whatsappInbox').doc(id), outbox = db.collection('whatsappOutbox').doc(id);
   if (!response.reply.trim() || response.reply.length > 4096) throw new HttpError(503, 'La respuesta supera el límite de WhatsApp.');
   await db.runTransaction(async transaction => {
@@ -260,6 +261,16 @@ export async function persistWhatsAppReply(id: string, leaseId: string, response
     if (!conversationPermitsReply(historyDoc.data(), inbox)) throw new HttpError(409, 'La atención de la conversación cambió.', 'WHATSAPP_CONTROL_CHANGED');
     const activeHistory = historyDoc.exists && Number(historyDoc.data()?.bodyExpiresAt) > Date.now() && historyDoc.data()?.content;
     const history = activeHistory ? historySchema.parse(decryptWhatsApp(historyDoc.data()!.content, historyRef.path)) : [];
+    let quotaStage: QuotaStage | undefined;
+    if (identity) {
+      if (identity.expectedScopeId !== `business_${inbox.businessId}`) throw new HttpError(403, 'El intento pertenece a otro negocio.');
+      const savedTurn = await transaction.get(db.collection('responseQuotaTurns').doc(reservation.reservationId));
+      if (savedTurn.data()?.status === 'completed') await readQuotaPublication(transaction, db, identity, 'replay');
+      else quotaStage = await prepareQuotaResult(transaction, db, identity, { kind: 'whatsapp_outbox', id }, Date.now());
+    } else {
+      const protocol = await transaction.get(db.collection('serverSettings').doc('responseQuotaProtocol'));
+      if (protocol.exists) throw new HttpError(409, 'Falta comprobar el intento de IA.', 'AI_RESPONSE_INTERRUPTED');
+    }
     history.push({ role: 'user', content: source.text }, { role: 'assistant', content: response.reply });
     while (history.length > 20 || history.reduce((total, message) => total + message.content.length, 0) > 55_000) history.shift();
     // Contact identity survives a handoff even though the old bot history is
@@ -275,6 +286,7 @@ export async function persistWhatsAppReply(id: string, leaseId: string, response
     transaction.create(outbox, record);
     transaction.set(reference, { ...inbox, state: 'completed', nextAttemptAt: WHATSAPP_TERMINAL });
     transaction.set(historyRef, { ...historyDoc.data(), content: encryptWhatsApp(history, historyRef.path), bodyExpiresAt, expiresAt: inbox.expiresAt });
+    if (quotaStage) applyResponseQuotaStage(transaction, db, quotaStage);
   });
 }
 

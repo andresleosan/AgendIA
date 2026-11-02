@@ -18,6 +18,12 @@ import { updateAppointmentAttendance } from '@/lib/server/appointment-attendance
 import { memoryFirestore } from './memoryFirestore';
 import { seedOwnerRescheduleScenario, ownerRescheduleActor, ownerRescheduleBusiness, ownerRescheduleSource, ownerRescheduleSelection, ownerRescheduleNow } from './owner-rescheduling-contract';
 import { readOwnerRescheduleSource, prepareOwnerReschedule, confirmOwnerReschedule } from '@/lib/server/owner-rescheduling';
+import { quotaStorageSetup, quotaStorageNow, quotaStorageInput } from './response-quota-storage-contract';
+import { markResponseQuotaDispatch } from '@/lib/server/response-quota-store';
+import { reconcileResponseQuota } from '@/lib/server/response-quota-admin';
+import { reserveResponseQuota } from '@/lib/server/response-quota';
+import { createCloudflareDatabase, StorageError } from '@/lib/storage/database';
+import type { DataReadResult, DataCommitResult } from '../shared/data-protocol';
 
 const prefix = 'projects/sarinbotsaas/databases/(default)/documents/';
 const stamp = '2026-10-16T12:00:00.123456Z';
@@ -41,6 +47,67 @@ function snapshot() {
 }
 
 describe('Firestore migration artifacts', () => {
+  it('restores quota attempts receipts reviews and original periods into empty D1 without reauthorizing dispatch', async () => {
+    const { vi } = await import('vitest');
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(quotaStorageNow); vi.stubEnv('SUPERADMIN_UID', 'demo-admin');
+    const memory = memoryFirestore(); let runtime: Awaited<ReturnType<typeof createDataTestRuntime>> | undefined;
+    try {
+      const settled = await quotaStorageSetup(memory.db);
+      await markResponseQuotaDispatch(settled.reservation, quotaStorageInput.fingerprint, { providerCallId: null }, memory.db);
+      await reconcileResponseQuota({ uid: 'demo-admin' }, { requestId: 'demo-backup-review', reservation: settled.reservation, expectedFingerprint: quotaStorageInput.fingerprint, resolution: 'consume', reason: 'Synthetic evidence only', evidenceSha256: 'b'.repeat(64) }, memory.db);
+      const pendingInput = { ...quotaStorageInput, requestId: 'demo-pending' };
+      const pending = await reserveResponseQuota(pendingInput, memory.db, undefined, { deadlineAt: quotaStorageNow + 1000 });
+      await markResponseQuotaDispatch(pending.reservation, pendingInput.fingerprint, { providerCallId: null }, memory.db);
+      const legacy = await reserveResponseQuota({ ...quotaStorageInput, requestId: 'demo-legacy-held' }, memory.db, undefined, { deadlineAt: quotaStorageNow + 1000 });
+      const legacyRef = memory.db.collection('responseQuotaTurns').doc(legacy.reservation.reservationId);
+      const { execution: _execution, nextAttemptAt: _next, ...oldTurn } = (await legacyRef.get()).data()!;
+      await legacyRef.set(oldTurn);
+      const documents = [...memory.rows].map(([path, row]) => rawDocument(path, Object.fromEntries(Object.entries(row.data).map(([key, value]) => [key, encodeFirestoreValue(value)]))));
+      const source = { ...snapshot(), documents, collections: [...new Set(documents.map(row => row.name.slice(prefix.length).split('/').slice(0, -1).join('/')))], missingAncestors: [] };
+      const bundle = prepareMigration(source, { updatedAt: quotaStorageNow });
+      runtime = await createDataTestRuntime({ quotaRecovery: true });
+      await runtime.db.exec(buildImportSql(bundle));
+      const rows = (await runtime.db.prepare('SELECT * FROM app_documents ORDER BY path').all()).results;
+      expect(verifyImportedRows(bundle, rows).documents).toBe(bundle.rows.length);
+      expect(rows.filter((row: { path: string }) => row.path.startsWith('responseQuotaReceipts/'))).toHaveLength(1);
+      expect(rows.filter((row: { path: string }) => row.path.includes('/reviews/'))).toHaveLength(1);
+      const restored = createCloudflareDatabase(async command => {
+        const response = await runtime!.fetch(command), data = await response.json() as DataReadResult | DataCommitResult;
+        if (!response.ok) throw new StorageError(response.status, (data as unknown as { code: string }).code); return data;
+      });
+      expect((await reserveResponseQuota(quotaStorageInput, restored, undefined, { deadlineAt: quotaStorageNow + 2000 })).kind).toBe('replay');
+      expect(await markResponseQuotaDispatch(pending.reservation, pendingInput.fingerprint, { providerCallId: null }, restored)).toBe('already_marked');
+      const recovery = await runtime.recoverQuota!(quotaStorageNow + 2000); expect(recovery.status).toBe(200);
+      const periodRef = restored.collection('responseQuotaScopes').doc(settled.reservation.scopeId).collection('periods').doc(settled.reservation.periodId);
+      expect((await periodRef.get()).data()).toMatchObject({ usedResponses: 2, reservedResponses: 1 });
+      expect((await restored.collection('responseQuotaReceipts').get()).size).toBe(2);
+      expect((await restored.collection('responseQuotaTurns').doc(legacy.reservation.reservationId).get()).data()).toMatchObject({ status: 'reserved', execution: { origin: 'legacy_unknown' } });
+      const legacyReview = { requestId: 'demo-legacy-review', reservation: legacy.reservation, expectedFingerprint: quotaStorageInput.fingerprint, resolution: 'consume' as const, reason: 'Synthetic legacy evidence', evidenceSha256: 'c'.repeat(64) };
+      await reconcileResponseQuota({ uid: 'demo-admin' }, legacyReview, restored);
+      await reconcileResponseQuota({ uid: 'demo-admin' }, legacyReview, restored);
+      expect((await periodRef.get()).data()).toMatchObject({ usedResponses: 3, reservedResponses: 0 });
+      expect((await restored.collection('responseQuotaReceipts').get()).size).toBe(3);
+      const reverse = buildReversePlan({ baseline: source, rows, blobs: [], revision: 0 });
+      expect(reverse.deletionCandidates).toEqual([]);
+      const roundtrip = prepareMigration({ ...source, documents: reverse.upserts.map((write: { update: { name: string; fields: Record<string, unknown> } }) => ({ ...write.update, createTime: stamp, updateTime: stamp })) }, { updatedAt: quotaStorageNow });
+      expect(roundtrip.rows).toEqual(bundle.rows);
+    } finally { await runtime?.dispose(); clock.mockRestore(); vi.unstubAllEnvs(); }
+  }, 60000);
+  it('a receipt-unaware Worker allowlist rejects a settlement batch without any partial write', async () => {
+    const memory = memoryFirestore(), { vi } = await import('vitest'), clock = vi.spyOn(Date, 'now').mockReturnValue(quotaStorageNow);
+    let runtime: Awaited<ReturnType<typeof createDataTestRuntime>> | undefined;
+    try {
+      const quota = await quotaStorageSetup(memory.db);
+      await markResponseQuotaDispatch(quota.reservation, quotaStorageInput.fingerprint, { providerCallId: null }, memory.db);
+      const { prepareResponseQuotaSettlement } = await import('@/lib/server/response-quota-store');
+      const stage = await memory.db.runTransaction(tx => prepareResponseQuotaSettlement(tx, memory.db, { quotaTurnId: quota.reservation.reservationId, expectedFingerprint: quotaStorageInput.fingerprint, expectedScopeId: quota.reservation.scopeId, reservation: quota.reservation }, true, { kind: 'dispatch_possible' }, quotaStorageNow));
+      runtime = await createDataTestRuntime({ previousQuotaRecords: true });
+      const response = await runtime.fetch({ action: 'commit', expectedRevision: 0, requestId: crypto.randomUUID(), writes: stage.writes });
+      expect(response.status).toBe(400);
+      expect((await runtime.db.prepare('SELECT COUNT(*) AS count FROM app_documents').first()).count).toBe(0);
+      expect((await runtime.db.prepare('SELECT revision FROM app_revision WHERE id=1').first()).revision).toBe(0);
+    } finally { await runtime?.dispose(); clock.mockRestore(); }
+  }, 60000);
   it('preserves attendance and prepared closed applied owner reschedule proofs through snapshot reverse reconciliation and actual SQL R2 backup recovery', async () => {
     const memory = memoryFirestore(), f = await attendanceFixture(memory.db);
     // Use real domain-produced audit documents; keep all data synthetic.

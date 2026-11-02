@@ -1,6 +1,9 @@
 import type { ResponseAllowance } from "@/types/firestore";
 
 const number = (value: number) => value.toLocaleString("es-CO");
+export function ResponseQuotaNotice() {
+  return <p className="text-xs leading-4 text-sarin-muted">Una respuesta de IA ya iniciada puede consumir una respuesta del plan aunque no llegue a mostrarse.</p>;
+}
 export const quotaDate = (value: number) => new Date(value).toLocaleDateString("es-CO", { timeZone: "America/Bogota" });
 
 export function ResponseQuota({ allowance, compact = false, introductorySource }: { allowance: ResponseAllowance | null | undefined; compact?: boolean; introductorySource?: 'payment' | 'invitation' }) {
@@ -37,7 +40,8 @@ export function ResponseQuota({ allowance, compact = false, introductorySource }
       {allowance.state === "exhausted" && <p role="status" className="text-sm text-amber-800">La atención de IA está pausada: no quedan respuestas disponibles. Tu agenda sigue disponible.</p>}
       {allowance.state === "expired" && <p className="text-sm text-sarin-muted">{trialEnded ? "Las respuestas sin utilizar no amplían las 10 citas de la prueba. Elige un plan para continuar." : "Esta vigencia terminó. Revisa las opciones de renovación."}</p>}
       {allowance.state === "suspended" && <p className="text-sm text-sarin-muted">La suscripción está suspendida. Contacta al administrador.</p>}
-      <p className="text-xs leading-4 text-sarin-muted">{period.source === "trial" ? "La configuración y la atención al cliente comparten este límite total de respuestas. Las ampliaciones requieren un plan vigente." : "La configuración asistida y la atención al cliente utilizan esta bolsa."} Cada respuesta completa cuenta una vez; tus mensajes y las llamadas internas al modelo no son respuestas adicionales.</p>
+      <p className="text-xs leading-4 text-sarin-muted">{period.source === "trial" ? "La configuración y la atención al cliente comparten este límite total de respuestas. Las ampliaciones requieren un plan vigente." : "La configuración asistida y la atención al cliente utilizan esta bolsa."} Cada intento iniciado cuenta una vez; tus mensajes no son respuestas adicionales.</p>
+      <ResponseQuotaNotice />
       {allowance.nextPeriod && <p className="border-t border-sarin-line pt-2 text-sm text-sarin-muted">Renovación programada: {number(allowance.nextPeriod.includedResponses + allowance.nextPeriod.extraResponses)} respuestas del {quotaDate(allowance.nextPeriod.startsAt)} al {quotaDate(allowance.nextPeriod.endsAt)}.</p>}
     </section>
   );

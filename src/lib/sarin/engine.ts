@@ -13,6 +13,7 @@ export interface ToolDefinition { type: 'function'; function: { name: string; de
 export interface EngineMessage { role: 'system' | 'user' | 'assistant' | 'tool'; content: string | null | ContentPart[]; tool_calls?: ToolCall[]; tool_call_id?: string; }
 export interface EngineAssistantMessage { role: 'assistant'; content: string | null; tool_calls?: ToolCall[]; }
 export type EngineProvider = AiProvider;
+export type EngineDispatchContext = { provider: EngineProvider; providerCallId: string | null };
 export interface EngineHealth { provider: EngineProvider | null; online: boolean; checkedAt: number; visionAvailable: boolean; error?: string; }
 export interface EngineTokenUsage { promptTokens: number; cacheHitTokens: number; cacheMissTokens: number; completionTokens: number; totalTokens: number; thinkingTokens?: number; }
 export interface EngineUsageObservation { callId: string; provider: CloudAiProvider; model: string | null; serviceTier?: 'standard' | 'flex' | 'priority' | null; startedAt: number; finishedAt: number; success: boolean; usage: EngineTokenUsage | null; }
@@ -222,7 +223,7 @@ export async function completePlatformSupport(capability: object, body: string, 
   } finally { observation.finishedAt = Date.now(); onUsage(observation); }
 }
 
-export async function completeChat(messages: EngineMessage[], tools?: readonly ToolDefinition[], options: { vision?: boolean; signal?: AbortSignal; provider?: EngineProvider; billingContext?: PaidCallContext; beforeDispatch?: () => Promise<void>; onUsage?: (observation: EngineUsageObservation) => void | Promise<void> } = {}): Promise<EngineAssistantMessage> {
+export async function completeChat(messages: EngineMessage[], tools?: readonly ToolDefinition[], options: { vision?: boolean; signal?: AbortSignal; provider?: EngineProvider; billingContext?: PaidCallContext; beforeDispatch?: (context: EngineDispatchContext) => Promise<void>; onUsage?: (observation: EngineUsageObservation) => void | Promise<void> } = {}): Promise<EngineAssistantMessage> {
   const config = engineConfig(options.vision, options.provider);
   if (config.provider !== 'ollama' && messages.some(message => Array.isArray(message.content) && message.content.some(part => part.type === 'image_url'))) {
     throw new HttpError(503, 'Las imágenes requieren el motor local de la Mac.');
@@ -237,7 +238,7 @@ export async function completeChat(messages: EngineMessage[], tools?: readonly T
   if (gate !== undefined && !['true', 'false'].includes(gate)) throw new HttpError(503, 'El presupuesto de IA no está configurado.', 'AI_BUDGET_UNAVAILABLE');
   const budgetActive = config.provider !== 'ollama' && gate === 'true';
   const requestBody = JSON.stringify(body);
-  const observation: EngineUsageObservation | undefined = config.provider !== 'ollama' && (options.onUsage || budgetActive)
+  const observation: EngineUsageObservation | undefined = config.provider !== 'ollama'
     ? { callId: randomUUID(), provider: config.provider, model: config.provider === 'gemini' ? null : config.model,
       ...(config.provider === 'gemini' ? { serviceTier: null } : {}), startedAt: Date.now(), finishedAt: 0, success: false, usage: null } : undefined;
   let reservation: BudgetReservation | undefined;
@@ -251,7 +252,7 @@ export async function completeChat(messages: EngineMessage[], tools?: readonly T
   // No provider request has been dispatched here. A denied policy check can
   // release this reservation; failures after fetch must retain normal accounting.
   try {
-    if (options.beforeDispatch) await options.beforeDispatch();
+    if (options.beforeDispatch) await options.beforeDispatch({ provider: config.provider, providerCallId: observation?.callId ?? null });
     if (options.signal?.aborted) throw new DOMException('Solicitud cancelada.', 'AbortError');
   } catch (error) {
     if (reservation) { try { await releaseUndispatchedPaidCallBudget(reservation); } catch { /* retain maximum on storage outage */ } }

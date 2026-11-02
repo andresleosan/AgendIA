@@ -6,6 +6,7 @@ import type { Database } from '@/lib/storage/types';
 import { getAdminDb } from '@/lib/firebase/admin';
 import { dateKeySchema, documentIdSchema, timeSchema } from './schemas';
 import { HttpError } from './http';
+import type { QuotaEffectHooks } from './response-quota-store';
 export type ChatScope = { actorUid: string; businessId: string; mode: ChatMode; channel: 'web' | 'whatsapp' };
 export const chatSelectionSchema = z.object({ serviceId: documentIdSchema.optional(), resourceId: documentIdSchema.optional(), dateKey: dateKeySchema.optional(), startTimeStr: timeSchema.optional(), proposalId: documentIdSchema.optional() }).strict();
 const schema = z.object({ version: z.number().int().nonnegative().safe(), selection: chatSelectionSchema, updatedAt: z.number().int().nonnegative().safe(), expiresAt: z.number().int().nonnegative().safe() }).strict();
@@ -26,12 +27,13 @@ export async function readChatState(scope: ChatScope, db: Database = getAdminDb(
     const current = empty(previous.version + 1, now); tx.set(ref, current); return current;
   });
 }
-export async function saveChatState(scope: ChatScope, expectedVersion: number, selection: ChatSelection, db: Database = getAdminDb(), now = Date.now()): Promise<ChatState> {
+export async function saveChatState(scope: ChatScope, expectedVersion: number, selection: ChatSelection, db: Database = getAdminDb(), now = Date.now(), quota?: QuotaEffectHooks): Promise<ChatState> {
   const parsed = chatSelectionSchema.parse(selection), ref = reference(scope, db);
   return db.runTransaction(async tx => {
     const document = await tx.get(ref), previous = document.exists ? parse(document.data()) : empty(0, now);
     const version = previous.expiresAt <= now ? previous.version + 1 : previous.version;
     if (version !== expectedVersion) throw new HttpError(409, 'La selección cambió. Reintenta para usar los datos actuales.', 'CHAT_STATE_CONFLICT');
-    const state = { ...empty(version + 1, now), selection: parsed }; tx.set(ref, state); return state;
+    const apply = await quota?.prepare(tx, { kind: 'chat_state', id: ref.id });
+    const state = { ...empty(version + 1, now), selection: parsed }; tx.set(ref, state); apply?.(); return state;
   });
 }

@@ -157,9 +157,9 @@ export function useDebouncedChat({
         return;
       const code = cause instanceof Error && "code" in cause && typeof cause.code === "string" ? cause.code : null;
       setErrorCode(code);
-      failed.current = code === "REQUEST_ALREADY_COMPLETED" ? null : code === 'CHAT_STATE_CONFLICT' ? { texts: batch.texts, requestId: crypto.randomUUID() } : batch;
+      failed.current = code === "REQUEST_ALREADY_COMPLETED" || code === 'AI_RESPONSE_INTERRUPTED' ? null : code === 'CHAT_STATE_CONFLICT' ? { texts: batch.texts, requestId: crypto.randomUUID() } : batch;
       if (code === 'CHAT_STATE_CONFLICT') stateVersion.current = undefined;
-      if (code === "REQUEST_ALREADY_COMPLETED") {
+      if (code === "REQUEST_ALREADY_COMPLETED" || code === 'AI_RESPONSE_INTERRUPTED') {
         ready.current = false;
         setIsWaitingBatch(false);
       }
@@ -178,7 +178,7 @@ export function useDebouncedChat({
     (text: string) => {
       const content = text.trim();
       if (!operational.current || !content || !tenantId || confirmationOperation.current || errorCode === "AI_QUOTA_EXHAUSTED") return;
-      if (errorCode === "REQUEST_ALREADY_COMPLETED") {
+      if (errorCode === "REQUEST_ALREADY_COMPLETED" || errorCode === 'AI_RESPONSE_INTERRUPTED') {
         setError(null);
         setErrorCode(null);
       }
@@ -234,5 +234,5 @@ export function useDebouncedChat({
     }
     finally { if (generation.current === current && !abort.signal.aborted) setConfirming(false); if (confirmation.current === abort) confirmation.current = null; }
   }, [proposal, tenantId, actorUid]);
-  return { messages, sendMessage, isWaitingBatch, isGenerating, error, retry, configurationDraft, proposal, confirming, confirmationUncertain, confirmProposal, quotaExhausted: errorCode === "AI_QUOTA_EXHAUSTED", requestAlreadyCompleted: errorCode === "REQUEST_ALREADY_COMPLETED" };
+  return { messages, sendMessage, isWaitingBatch, isGenerating, error, retry, configurationDraft, proposal, confirming, confirmationUncertain, confirmProposal, quotaExhausted: errorCode === "AI_QUOTA_EXHAUSTED", requestAlreadyCompleted: errorCode === "REQUEST_ALREADY_COMPLETED" || errorCode === 'AI_RESPONSE_INTERRUPTED' };
 }

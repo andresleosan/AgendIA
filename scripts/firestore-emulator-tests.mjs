@@ -40,7 +40,7 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   if (!ready) throw new Error(`Firestore emulator did not start. ${output}`);
-  const test = spawn(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', 'tests/firestore.rules.test.ts', 'tests/firestore.integration.test.ts', 'tests/waitlist-offers-firestore.test.ts', 'tests/business-team-firestore.test.ts'], {
+  const test = spawn(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', 'tests/firestore.rules.test.ts', 'tests/firestore.integration.test.ts', 'tests/waitlist-offers-firestore.test.ts', 'tests/business-team-firestore.test.ts', 'tests/response-quota-recovery-firestore.test.ts'], {
     stdio: 'inherit', windowsHide: true,
     env: { ...process.env, FIRESTORE_EMULATOR_HOST: `${host}:${port}`, FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9099', FIREBASE_ADMIN_PROJECT_ID: 'demo-sarin-bot' },
   });

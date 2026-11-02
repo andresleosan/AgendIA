@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { consentedFirestore } from './consent-fixtures';
-const memoryFirestore = (initial: Parameters<typeof consentedFirestore>[0] = {}) => consentedFirestore(initial, ['owner', 'synthetic-client']);
+import { quotaProtocolEntries } from './response-quota-fixtures';
+const memoryFirestore = (initial: Parameters<typeof consentedFirestore>[0] = {}) => consentedFirestore({ ...quotaProtocolEntries, ...initial }, ['owner', 'synthetic-client']);
 import type { Database } from '../src/lib/storage/types';
 import { enforceClientInferenceRateLimit, enforceInferenceAdmission } from '../src/lib/server/inference-rate-limit';
 import { createCloudflareDatabase, StorageError } from '../src/lib/storage/database';
@@ -10,7 +11,7 @@ import type { DataCommand, DataCommitResult, DataReadResult } from '../shared/da
 
 const state = vi.hoisted(() => ({ db: undefined as unknown, complete: vi.fn() }));
 vi.mock('../src/lib/firebase/admin', () => ({ getAdminDb: () => state.db }));
-vi.mock('../src/lib/sarin/engine', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/sarin/engine')>(), completeChat: state.complete }));
+vi.mock('../src/lib/sarin/engine', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/sarin/engine')>(), completeChat: async (...args: Parameters<typeof import('../src/lib/sarin/engine')['completeChat']>) => { await args[2]?.beforeDispatch?.({ provider: 'ollama', providerCallId: null }); return state.complete(...args); } }));
 import { runSarinChat } from '../src/lib/server/chat';
 
 const now = Date.UTC(2030, 0, 7, 12);
@@ -161,16 +162,16 @@ describe('rate limits before commercial response reservation', () => {
     expect(state.complete).toHaveBeenCalledTimes(10);
   });
 
-  it('bounds provider failures retried with one request ID without retaining commercial capacity', async () => {
+  it('consumes an initiated provider failure once and prevents another inference for its request ID', async () => {
     vi.useFakeTimers(); vi.setSystemTime(now); vi.stubEnv('SARIN_CHAT_PROVIDER', 'ollama');
     const { database, rows } = adapter({ [`businesses/${business.id}`]: business }); state.db = database;
     state.complete.mockRejectedValue(new Error('synthetic provider unavailable'));
-    for (let index = 0; index < 10; index++) await expect(runSarinChat({ user: { uid: 'synthetic-client' }, body: body(0) })).rejects.toThrow('synthetic provider unavailable');
-    await expect(runSarinChat({ user: { uid: 'synthetic-client' }, body: body(0) })).rejects.toMatchObject({ status: 429, code: 'CLIENT_RATE_LIMITED' });
-    expect(state.complete).toHaveBeenCalledTimes(10);
+    await expect(runSarinChat({ user: { uid: 'synthetic-client' }, body: body(0) })).rejects.toThrow('synthetic provider unavailable');
+    for (let index = 0; index < 10; index++) await expect(runSarinChat({ user: { uid: 'synthetic-client' }, body: body(0) })).rejects.toMatchObject({ code: 'REQUEST_ALREADY_COMPLETED' });
+    expect(state.complete).toHaveBeenCalledTimes(1);
     const periods = [...rows].filter(([path]) => path.startsWith('responseQuotaScopes/') && path.includes('/periods/'));
-    expect(periods[0][1].data).toMatchObject({ usedResponses: 0, reservedResponses: 0 });
-    expect(rows.get(ratePath)?.data.events).toHaveLength(10);
+    expect(periods[0][1].data).toMatchObject({ usedResponses: 1, reservedResponses: 0 });
+    expect(rows.get(ratePath)?.data.events).toHaveLength(1);
   });
 
   it.each(['sarin_onboarding', 'sarin_owner_copilot'] as const)('admits %s before queueing and keeps exact retry delay', async mode => {

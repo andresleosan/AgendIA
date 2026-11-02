@@ -21,6 +21,7 @@ import { prepareBookingActionAdmission } from './booking-action-admission';
 import { appointmentRescheduleViewSchema, rescheduleResultSchema, type RescheduleResult } from '@/lib/appointment-reschedule';
 import { appointmentRescheduleFingerprint, assertRescheduleAccess, assertRescheduleSource, currentRescheduleService, readRescheduleSource, resolveRescheduleSubject, rescheduleAppointmentInTransaction, type AppointmentRescheduleContext, type AppointmentRescheduleMetadata } from './appointment-rescheduling';
 import { assertClientCanReschedule } from './client-policy';
+import type { QuotaEffectHooks } from './response-quota-store';
 const selectionSchema = bookingSchema.pick({ dateKey: true, startTimeStr: true, serviceId: true, resourceId: true });
 const rescheduleMetadataSchema = appointmentRescheduleViewSchema.extend({ sourceFingerprint: z.string().regex(/^[a-f0-9]{64}$/), requestId: requestIdSchema }).strict();
 const legacyProposalSchema = z.object({ version: z.literal(1), id: documentIdSchema, businessId: documentIdSchema, actorUid: z.string().min(1).max(128), selection: selectionSchema,
@@ -40,7 +41,7 @@ function view(proposal: Proposal): BookingProposalView {
   return { id: proposal.id, businessId: proposal.businessId, serviceName: proposal.service.name, resourceName: proposal.resource.name, dateKey: proposal.selection.dateKey, startTimeStr: proposal.selection.startTimeStr,
     endTimeStr: toTimeStr(toMinutes(proposal.selection.startTimeStr) + proposal.service.durationMinutes), priceCOP: proposal.service.price, expiresAt: proposal.expiresAt, intakeFields: proposal.intakeFields, ...(proposal.version === 2 ? { subjectCase: proposal.subjectCase } : {}), ...(reschedule ? { reschedule } : {}) };
 }
-export async function createBookingProposal(user: ChatActor, businessId: string, input: Pick<BookingInput, 'dateKey' | 'startTimeStr' | 'serviceId' | 'resourceId'>, requestId: string, db: Database = getAdminDb(), suppliedSubject?: StructuredProposalContext, reschedule?: AppointmentRescheduleContext): Promise<BookingProposalView> {
+export async function createBookingProposal(user: ChatActor, businessId: string, input: Pick<BookingInput, 'dateKey' | 'startTimeStr' | 'serviceId' | 'resourceId'>, requestId: string, db: Database = getAdminDb(), suppliedSubject?: StructuredProposalContext, reschedule?: AppointmentRescheduleContext, quota?: QuotaEffectHooks): Promise<BookingProposalView> {
   documentIdSchema.parse(businessId); requestIdSchema.parse(requestId);
   const requestedSelection = selectionSchema.parse(input), id = randomBytes(24).toString('base64url');
   const supplied = suppliedSubject ? { case: bookingSubjectCaseSchema.parse(suppliedSubject.case), beneficiary: bookingBeneficiarySchema.parse(suppliedSubject.beneficiary) } : undefined;
@@ -76,6 +77,7 @@ export async function createBookingProposal(user: ChatActor, businessId: string,
       if (previous.version === 2 && (previous.policyRevision !== capability.revision || bookingSubjectHash(previous.authorization) !== bookingSubjectHash(authorization))) throw new HttpError(409, 'La política o autorización cambió. Inicia una nueva reserva.', 'BOOKING_PROPOSAL_CHANGED');
       if (source && (appointmentRescheduleFingerprint(source) !== previous.reschedule?.sourceFingerprint || (previous.version === 2 && previous.beneficiaryHash !== bookingSubjectHash(subject?.beneficiary)))) throw new HttpError(409, 'La cita cambió. Actualiza Mis citas.', 'RESCHEDULE_SOURCE_CHANGED');
       if (source && reschedule) { const now = Date.now(); assertRescheduleSource(source, user, businessId, reschedule, now); assertRescheduleAccess(business, now); }
+      const apply = await quota?.prepare(tx, { kind: 'proposal', id: previous.id }); apply?.();
       return view(previous);
     }
     if (!business.sarinConfig.onboardingCompleted || !business.slug) throw new HttpError(403, 'El negocio todavía no está configurado.');
@@ -95,7 +97,8 @@ export async function createBookingProposal(user: ChatActor, businessId: string,
     const metadata: AppointmentRescheduleMetadata | undefined = source && reschedule ? { appointmentId: source.id, sourceRevision: reschedule.sourceRevision, sourceFingerprint: appointmentRescheduleFingerprint(source), requestId, source: { dateKey: source.dateKey, startTimeStr: source.startTimeStr, endTimeStr: source.endTimeStr, resourceId: source.resourceId, ...(business.resources.find(item => item.id === source.resourceId)?.name ? { resourceName: business.resources.find(item => item.id === source.resourceId)!.name } : {}), ...(source.price !== undefined ? { priceCOP: source.price } : {}) }, targetServiceId: service.id, targetResourceId: resource.id } : undefined;
     const proposal: Proposal = proposalSchema.parse({ version: subject ? 2 : 1, id, businessId, actorUid: user.uid, selection, service, resource, intakeFields: subject && (capability.dataMode === 'health' || subject.case.subjectKind === 'represented_minor') ? [] : business.sarinConfig.intakeFields, createdAt: now, expiresAt: now + 600000, appointmentId: null,
       ...(subject ? { subjectCase: subject.case, beneficiaryHash: bookingSubjectHash(subject.beneficiary), policyRevision: capability.revision, authorization } : {}), ...(metadata ? { reschedule: metadata } : {}) });
-    admit?.(); tx.create(collection.doc(id), proposal); tx.create(requestRef, { actorUid: user.uid, businessId, selection, proposalId: id, ...(metadata ? { reschedule: metadata } : {}) });
+    const applyQuota = await quota?.prepare(tx, { kind: 'proposal', id });
+    admit?.(); tx.create(collection.doc(id), proposal); tx.create(requestRef, { actorUid: user.uid, businessId, selection, proposalId: id, ...(metadata ? { reschedule: metadata } : {}) }); applyQuota?.();
     return view(proposal);
   });
 }

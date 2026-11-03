@@ -15,6 +15,7 @@ import {
 import { firestoreRequester, googleCloudSdkCommand, parseArguments, queryD1 } from '../scripts/cloudflare-data-migration.mjs';
 import { createDataTestRuntime } from '../cloudflare/tests/data-runtime.mjs';
 import { verifyD1Backup } from '../scripts/verify-d1-backup.mjs';
+import { classifyBackupDocument } from '../scripts/lib/recovery-backup.mjs';
 import { attendanceCorrectionCommand, attendanceFixture, attendanceNow } from './appointment-attendance-contract';
 import { updateAppointmentAttendance } from '@/lib/server/appointment-attendance';
 import { memoryFirestore } from './memoryFirestore';
@@ -84,6 +85,7 @@ describe('Firestore migration artifacts', () => {
       const { execution: _execution, nextAttemptAt: _next, ...oldTurn } = (await legacyRef.get()).data()!;
       await legacyRef.set(oldTurn);
       const documents = [...memory.rows].map(([path, row]) => rawDocument(path, Object.fromEntries(Object.entries(row.data).map(([key, value]) => [key, encodeFirestoreValue(value)]))));
+      for (const [path, row] of memory.rows) expect(() => classifyBackupDocument(path, row.data, quotaStorageNow), path).not.toThrow();
       const source = { ...snapshot(), documents, collections: [...new Set(documents.map(row => row.name.slice(prefix.length).split('/').slice(0, -1).join('/')))], missingAncestors: [] };
       const bundle = prepareMigration(source, { updatedAt: quotaStorageNow });
       runtime = await createDataTestRuntime({ quotaRecovery: true });
@@ -158,6 +160,11 @@ describe('Firestore migration artifacts', () => {
       const baseline = { ...snapshot(), documents: [...snapshot().documents, ...[...memory.rows].map(encodeRow)] };
       await updateAppointmentAttendance(f.owner, f.business.id, f.appointment.id, attendanceCorrectionCommand, memory.db);
       const current = { ...snapshot(), documents: [...snapshot().documents, ...[...memory.rows].map(encodeRow)] };
+      for (const [path, row] of memory.rows) {
+        const { historicalMetadata, ...known } = row.data;
+        if (historicalMetadata) expect(() => classifyBackupDocument(path, row.data, attendanceNow), path).toThrow('D1_BACKUP_UNCLASSIFIED');
+        expect(() => classifyBackupDocument(path, known, attendanceNow), path).not.toThrow();
+      }
       const bundle = prepareMigration(current, { updatedAt: attendanceNow });
       runtime = await createDataTestRuntime();
       await runtime.db.exec(buildImportSql(bundle));

@@ -17,6 +17,46 @@ const cloudflare = join(workspace, 'cloudflare');
 const wrangler = join(cloudflare, 'node_modules', 'wrangler', 'bin', 'wrangler.js');
 const operations = ['--export', '--prepare', '--verify', '--verify-source', '--import', '--verify-target', '--export-d1', '--reverse-plan'];
 
+/** SQL capture adapter; logical --export-d1 remains a separate migration format. No CLI/remote operation is added.
+ * @param {{endpoint:string,downloadOrigin:string,tokenSupplier:()=>string|Promise<string>,fetchImpl?:Function,now?:()=>number,wait?:Function,maxPolls?:number}} options
+ */
+export function d1SqlExporter({ endpoint, downloadOrigin, tokenSupplier, fetchImpl = fetch, now = Date.now, wait = delay, maxPolls = 120 }) {
+  /** @returns {never} */
+  const reject = code => { throw new Error(`RECOVERY_${code}`); };
+  const api = new URL(endpoint), origin = new URL(downloadOrigin);
+  if (api.origin !== 'https://api.cloudflare.com' || !/^\/client\/v4\/accounts\/[a-f0-9]{32}\/d1\/database\/[a-f0-9-]{36}\/export$/.test(api.pathname) || api.search || api.hash || api.username || api.password || origin.protocol !== 'https:' || !/^[a-z0-9.-]+\.r2\.cloudflarestorage\.com$/.test(origin.hostname) || origin.origin !== downloadOrigin || !Number.isInteger(maxPolls) || maxPolls < 1 || maxPolls > 120) reject('EXPORT_DESTINATION');
+  return { async exportSql({ signal } = {}) {
+    const bounded = AbortSignal.any([AbortSignal.timeout(30 * 60 * 1000), ...(signal ? [signal] : [])]);
+    const startedAt = now(); let bookmark;
+    try {
+      for (let attempt = 0; attempt < maxPolls; attempt++) {
+        bounded.throwIfAborted();
+        const response = await fetchImpl(endpoint, { method: 'POST', headers: { Authorization: `Bearer ${await tokenSupplier()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ output_format: 'polling', ...(bookmark ? { current_bookmark: bookmark } : {}) }), redirect: 'error', signal: bounded });
+        if (!response.ok) { await response.body?.cancel(); reject('EXPORT_HTTP'); }
+        let reply;
+        try { reply = await boundedJson(response, 1024 * 1024); } catch { reject('EXPORT_RESPONSE'); }
+        const value = reply?.result;
+        if (reply.success !== true || !value || typeof value.at_bookmark !== 'string' || !value.at_bookmark || value.at_bookmark.length > 512 || bookmark && value.at_bookmark !== bookmark) reject('EXPORT_BOOKMARK');
+        bookmark = value.at_bookmark;
+        if (value.status === 'error') reject('EXPORT_FAILED');
+        if (value.status === 'complete') {
+          let url; try { url = new URL(value.result.signed_url); } catch { reject('EXPORT_DESTINATION'); }
+          if (url.origin !== downloadOrigin || url.username || url.password || url.hash) reject('EXPORT_DESTINATION');
+          const download = await fetchImpl(url.href, { method: 'GET', redirect: 'error', signal: bounded });
+          if (!download.ok || !download.body) { await download.body?.cancel(); reject('EXPORT_DOWNLOAD'); }
+          return { stream: download.body, bookmark, startedAt, completedAt: now(), recoverableAt: startedAt };
+        }
+        if (value.status !== undefined && value.status !== 'pending') reject('EXPORT_RESPONSE');
+        if (attempt + 1 < maxPolls) await wait(1000, undefined, { signal: bounded });
+      }
+      reject('EXPORT_TIMEOUT');
+    } catch (error) {
+      if (/^RECOVERY_[A-Z_]+$/.test(error?.message ?? '')) throw error;
+      reject(bounded.aborted ? 'EXPORT_TIMEOUT' : 'EXPORT_NETWORK');
+    }
+  } };
+}
+
 export function parseArguments(args) {
   const result = {};
   const flags = new Set([...operations, '--remote', '--maintenance-confirmed']);
@@ -59,7 +99,7 @@ export function googleAccessToken() {
   return token;
 }
 
-async function boundedJson(response) {
+async function boundedJson(response, maxBytes = 64 * 1024 * 1024) {
   const reader = response.body?.getReader();
   if (!reader) fail('FIRESTORE_RESPONSE');
   const chunks = [];
@@ -69,7 +109,7 @@ async function boundedJson(response) {
       const { done, value } = await reader.read();
       if (done) break;
       length += value.byteLength;
-      if (length > 64 * 1024 * 1024) fail('FIRESTORE_RESPONSE_SIZE');
+      if (length > maxBytes) fail('FIRESTORE_RESPONSE_SIZE');
       chunks.push(Buffer.from(value));
     }
     return JSON.parse(Buffer.concat(chunks).toString('utf8'));

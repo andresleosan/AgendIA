@@ -5,6 +5,7 @@ import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { normalizeImportedRow, privateDirectory, readPrivateFile, writePrivateFile } from './lib/data-migration.mjs';
+import { recoveryMigrationInventory, validateBackupManifest, verifySanitizedSql } from './lib/recovery-backup.mjs';
 
 const tables = ['app_commits', 'app_documents', 'app_revision'];
 const sha256 = value => createHash('sha256').update(value).digest('hex');
@@ -13,12 +14,17 @@ const schemaQuery = "SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE tbl_
 const fingerprint = rows => ({ count: rows.length, sha256: sha256(canonical(rows.map(row => canonical(row)).sort())) });
 
 /** Only imports an existing private SQL backup into an isolated local D1. No remote API exists here. */
-export async function verifyD1Backup(inputDirectory) {
+export async function verifyD1Backup(inputDirectory, options = {}) {
   const directory = await privateDirectory(inputDirectory);
   const manifest = JSON.parse((await readPrivateFile(directory, 'export-manifest.json')).toString('utf8').replace(/^\uFEFF/, ''));
   if (manifest.ok !== true || manifest.filename !== 'sarin-bot-data.sql' || !/^[a-f0-9]{64}$/.test(manifest.sha256)) throw new Error('D1_BACKUP_MANIFEST');
   const bytes = await readPrivateFile(directory, manifest.filename);
   if (bytes.length !== manifest.bytes || sha256(bytes) !== manifest.sha256) throw new Error('D1_BACKUP_HASH');
+  if (Object.hasOwn(options, 'expectedManifest')) {
+    const expected = options.expected ?? { sourceSha: options.expectedManifest?.sourceSha, migrations: recoveryMigrationInventory(), protocols: { quota: 2 } };
+    const set = validateBackupManifest(options.expectedManifest, expected);
+    verifySanitizedSql(bytes, set.sanitization);
+  }
   const source = new DatabaseSync(':memory:', { allowExtension: false });
   let runtime;
   try {

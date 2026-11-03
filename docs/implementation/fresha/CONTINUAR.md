@@ -25,7 +25,7 @@ Lee .agents/skills/avanzar/SKILL.md y continúa el plan de Fresha: reanuda la ta
 
 3. Reanudar `currentTaskId` y su `resume`, o seleccionar exactamente la siguiente tarea elegible. Trabajar el producto en `workspace.codeRoot`, aislado del checkout mixto; el estado continúa solo en `workspace.controlRoot`.
 4. Resolver hechos en código/docs/herramientas; usar brainstorming/grilling para decisiones materiales y writing-plans para el desglose aprobado. Aplicar Superpowers al ejecutar, depurar, revisar y verificar según la tarea.
-5. Tras validar, hacer commit enfocado y push al remoto/rama de trabajo registrados en `preferences.gitDelivery`, sin pedir de nuevo esa autorización. Comprobar el SHA remoto y los checks aplicables. Guardar resultado, evidencia, limitaciones y continuación con revisión atómica del JSON; despejar la tarea actual solo al completar la entrega. Un fallo de commit/push conserva el mismo ID y su paso pendiente para otra sesión. No copiar el tasks.json mutable al worktree.
+5. Tras validar, hacer commit enfocado y entregar a main, sin pedir de nuevo esa autorización ni crear ramas por defecto. Si se requiere PR por protección, completarlo como paso hacia main. Comprobar SHA remoto, CI y despliegue de ese SHA. Guardar evidencia y continuación con revisión atómica del JSON; despejar la tarea actual solo al completar la entrega. Un fallo de commit/push/merge/CI/despliegue conserva el mismo ID y paso pendiente. No copiar el tasks.json mutable al worktree.
 
 ## Tareas y herramientas ya incluidas
 
@@ -44,7 +44,7 @@ El [catálogo](../../tooling/sarin-skills.md) contiene nombres reales, fuentes f
 
 ## Cierre de la sesión
 
-El propietario autorizó commit y push al terminar cada tarea validada el 3 de noviembre de 2026. El destino persistente es `origin`, repositorio `andresleosan/SarinBotSAAS`, rama de trabajo `codex/fresha-implementation-20261030`; main dispara producción y conserva su aprobación específica. Esta instrucción sustituye el «sin push» de subplanes anteriores. Diseños y documentación también se versionan sin atribuirles funcionalidad. Sin cambios versionables no se crea un commit vacío.
+El propietario autorizó commit y push al terminar cada tarea validada y aclaró el 3 de noviembre de 2026 que todo debe quedar en main para desplegar a producción. Destino persistente: `origin`, repositorio `andresleosan/SarinBotSAAS`, main y su CI de despliegue habitual. No crear ramas por defecto; el PR de la rama existente debe integrarse. Esta instrucción sustituye el «sin push» y la entrega solo a rama auxiliar anteriores. Diseños y documentación también se versionan sin atribuirles funcionalidad. Sin cambios versionables no se crea un commit vacío. Capacidades, exportaciones/restauraciones reales, cobros y envíos siguen separados.
 
 El cierre informa tarea/resultado, SHA y destino del push comprobado, checks reales, limitaciones y siguiente ID. Si terminó una entrega de implementación con commit, push y validación del candidato, debe incluir:
 
@@ -52,4 +52,4 @@ El cierre informa tarea/resultado, SHA y destino del push comprobado, checks rea
 
 Si queda CI, aprobación, integración, publicación o una comprobación requerida pendiente, se especifica lo que falta. Si el contrato necesita respuesta, `/avanzar` reanuda esa misma tarea; no la sustituye por otra. Un diseño/desglose cerrado se identifica como documentación, sin afirmar código publicado.
 
-La preferencia de cerrar con ese aviso no aprueba despliegues, cambios operativos ni envíos futuros. Los efectos externos mantienen su autorización concreta. Las comprobaciones acotadas de una entrega tampoco cierran la QA integral de los165 requisitos: el zoom nativo200% pendiente permanece visible en la evidencia y se comprueba cuando corresponda.
+La instrucción expresa vigente autoriza main y su despliegue habitual de código. Los demás efectos externos mantienen su autorización concreta. Las comprobaciones acotadas de una entrega tampoco cierran la QA integral de los165 requisitos: el zoom nativo200% pendiente permanece visible en la evidencia y se comprueba cuando corresponda.

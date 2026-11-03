@@ -15,6 +15,12 @@ const fingerprint = rows => ({ count: rows.length, sha256: sha256(canonical(rows
 
 /** Only imports an existing private SQL backup into an isolated local D1. No remote API exists here. */
 export async function verifyD1Backup(inputDirectory, options = {}) {
+  if (inputDirectory && typeof inputDirectory === 'object') {
+    const set = inputDirectory;
+    if (typeof set.directory !== 'string' || !set.manifest || !set.expected) throw new Error('D1_BACKUP_MANIFEST');
+    options = { ...options, expectedManifest: set.manifest, expected: set.expected };
+    inputDirectory = set.directory;
+  }
   const directory = await privateDirectory(inputDirectory);
   const manifest = JSON.parse((await readPrivateFile(directory, 'export-manifest.json')).toString('utf8').replace(/^\uFEFF/, ''));
   if (manifest.ok !== true || manifest.filename !== 'sarin-bot-data.sql' || !/^[a-f0-9]{64}$/.test(manifest.sha256)) throw new Error('D1_BACKUP_MANIFEST');

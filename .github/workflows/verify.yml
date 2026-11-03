@@ -38,6 +38,15 @@ jobs:
           cache_dependency_path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
+      - name: Prepare verified age for synthetic recovery tests
+        run: |
+          docker build --target recovery-age -t sarin-recovery-age .
+          sarin_age_container=$(docker create sarin-recovery-age)
+          docker cp "$sarin_age_container:/usr/local/bin/age" "$RUNNER_TEMP/age"
+          docker cp "$sarin_age_container:/usr/local/bin/age-keygen" "$RUNNER_TEMP/age-keygen"
+          docker rm "$sarin_age_container"
+          chmod 755 "$RUNNER_TEMP/age" "$RUNNER_TEMP/age-keygen"
+          echo "SARIN_TEST_AGE_PATH=$RUNNER_TEMP/age" >> "$GITHUB_ENV"
       - run: pnpm test
       - run: node --test pages-gateway/tests/*.test.mjs
       - run: pnpm audit --audit-level=high

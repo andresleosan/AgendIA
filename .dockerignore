@@ -22,6 +22,13 @@ vitest.config.mts
 playwright-report
 *.vault.json
 sarin-vault-*.json
+# Recovery plaintext and operator identities never belong in the build context.
+**/capture-*
+**/restore-*
+**/*.age
+**/*.sql.backup
+**/identity.txt
+**/age-identity*
 .firebaserc
 deploy/firebase.public.env
 deploy/ollama.env

@@ -130,13 +130,16 @@ export async function captureRecoveryComponents({ source, auth, config, director
       await save('auth-passwords.json', Buffer.from(bytes), 'auth');
     }
     const authComplete = clock(); snapshotTimes.auth = { startedAt: authRecoverableAt, completedAt: authComplete, recoverableAt: authRecoverableAt };
-    await save('auth.json', Buffer.from(canonicalJson({ formatVersion: 1, batchId: randomUUID(), requiresNewLogin: true, grantsAuthority: false, users })), 'auth');
+    const authBatchId = randomUUID();
+    await save('auth.json', Buffer.from(canonicalJson({ formatVersion: 1, batchId: authBatchId, requiresNewLogin: true, grantsAuthority: false, users })), 'auth');
     const latest = checkedConfig(await wait(config.readInventory({ signal: combined })), source, clock());
     if (canonicalJson(initial) !== canonicalJson(latest)) fail('CONFIG_CHANGED');
     snapshotTimes.config = { startedAt: initial.observedAt, completedAt: clock(), recoverableAt: Math.min(initial.observedAt, ...Object.values(initial.sections).map(s => s.observedAt), ...initial.secrets.map(s => s.observedAt)) };
     snapshotTimes.config.startedAt = snapshotTimes.config.recoverableAt;
     await save('config.json', Buffer.from(canonicalJson(initial)), 'config'); check();
-    return { complete: true, blockers: [], directory: target, files, snapshotTimes, bookmark: exported.bookmark, sanitization: sanitized.sanitization, r2References: sanitized.r2Manifest.references };
+    const batches = { auth: { batchId: authBatchId, sha256: files.find(f => f.filename === 'auth.json').sha256 },
+      config: { batchId: initial.batchId, sha256: files.find(f => f.filename === 'config.json').sha256, passwordSha256: initial.passwordBatch?.sha256 ?? null } };
+    return { complete: true, blockers: [], directory: target, files, snapshotTimes, batches, bookmark: exported.bookmark, sanitization: sanitized.sanitization, r2References: sanitized.r2Manifest.references };
   } catch (error) {
     if (target) {
       if (dirname(resolve(target)) !== resolve(parent) || !/^capture-[a-f0-9-]+$/.test(basename(target))) fail('CLEANUP_PATH');

@@ -1,3 +1,12 @@
+FROM golang:1.26.1-alpine@sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039 AS sigsum-builder
+RUN go install sigsum.org/sigsum-go/cmd/sigsum-verify@v0.13.1
+
+FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS recovery-age
+COPY --from=sigsum-builder /go/bin/sigsum-verify /usr/local/bin/sigsum-verify
+COPY scripts/prepare-recovery-age.mjs /prepare/scripts/prepare-recovery-age.mjs
+COPY scripts/lib/recovery-age.lock.json /prepare/scripts/lib/recovery-age.lock.json
+RUN node /prepare/scripts/prepare-recovery-age.mjs --directory /usr/local/bin
+
 FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS builder
 WORKDIR /app
 # npm bootstraps only the pinned pnpm CLI in this disposable build stage.
@@ -28,6 +37,8 @@ COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 COPY --from=builder --chown=node:node /app/public ./public
 COPY --chown=node:node scripts/container-start.mjs ./container-start.mjs
 COPY --chown=node:node scripts/lib/cloudflare-credentials.mjs ./lib/cloudflare-credentials.mjs
+COPY --from=recovery-age /usr/local/bin/age /usr/local/bin/age
+COPY --chown=node:node scripts/lib/recovery-age.lock.json ./scripts/lib/recovery-age.lock.json
 USER node
 EXPOSE 3000
 # Exactly one Node process: replicas/clustering would multiply inference slots.

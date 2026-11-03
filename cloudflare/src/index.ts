@@ -1,4 +1,5 @@
 import { cleanupAdminPaymentRetention } from './admin-payment-retention.ts';
+import { scheduleRecoveryBackup, handleRecoveryOutbound, sourceObjectsPinned } from './recovery-backup.ts';
 import { recoverWorkerResponseQuota } from './response-quota-recovery.ts';
 import { cleanupPlatformSupportRetention } from './platform-support-retention.ts';
 import { hasPotentialPlatformWork } from './platform-whatsapp-wake.ts';
@@ -37,13 +38,17 @@ export class SarinApp extends Container<CloudflareBindings> {
       this.renewActivityTimeout();
       return;
     }
+    if (this.env.SARIN_RECOVERY_DB && await sourceObjectsPinned(this.env)) {
+      this.renewActivityTimeout();
+      return;
+    }
     if (this.ctx.container?.running) await this.stop();
   }
 }
 
 // Invoke the SDK's inherited setter to populate ContainerProxy's dispatch registry.
 // A subclass static field would shadow that setter in the pinned SDK 0.3.7.
-SarinApp.outboundByHost = { 'sarin-google.internal': handleIdentityOutbound, 'sarin-data.internal': handleDataOutbound, 'sarin-audio.internal': handlePlatformAudioOutbound };
+SarinApp.outboundByHost = { 'sarin-google.internal': handleIdentityOutbound, 'sarin-data.internal': handleDataOutbound, 'sarin-audio.internal': handlePlatformAudioOutbound, 'sarin-backup.internal': handleRecoveryOutbound };
 
 export default {
   async fetch(request: Request, env: CloudflareBindings): Promise<Response> {
@@ -54,6 +59,7 @@ export default {
   },
   async scheduled(_controller: ScheduledController, env: CloudflareBindings): Promise<void> {
     const flags: Record<string, unknown> = { ...env };
+    try { await scheduleRecoveryBackup(env); } catch { console.error({ event: 'recovery_backup_failed' }); }
     if (flags.SARIN_MAINTENANCE !== 'true') {
       try {
         const quota = await recoverWorkerResponseQuota(env);

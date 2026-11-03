@@ -39,7 +39,7 @@ test('scheduled uses exact string flags and maintenance, with no platform-only w
     if (expected) assert.deepEqual(logs[0], { event: 'platform_whatsapp_retention', clearedBodies: 0, deletedMetadata: 0, morePending: false });
   }
   let stopped = 0;
-  await SarinApp.prototype.onActivityExpired.call({ envVars: { PLATFORM_WHATSAPP_RETENTION_ENABLED: 'true' }, ctx: { container: { running: true } }, stop: async () => { stopped++; }, renewActivityTimeout() { assert.fail('Platform retention must not renew activity'); } });
+  await SarinApp.prototype.onActivityExpired.call({ env: {}, envVars: { PLATFORM_WHATSAPP_RETENTION_ENABLED: 'true' }, ctx: { container: { running: true } }, stop: async () => { stopped++; }, renewActivityTimeout() { assert.fail('Platform retention must not renew activity'); } });
   assert.equal(stopped, 1);
 });
 

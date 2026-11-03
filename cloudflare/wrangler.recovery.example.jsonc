@@ -1,0 +1,9 @@
+{
+  "note": "Template only. Merge bindings after explicit resource/cost/operation approval. Apply recovery-migrations only to the separate control DB. No public bucket or CORS.",
+  "vars": {"SARIN_BACKUP_ENABLED":"false", "SARIN_BACKUP_CLEANUP_ENABLED":"false"},
+  "d1_databases": [{"binding":"SARIN_RECOVERY_DB", "database_name":"REQUIRES_APPROVAL", "database_id":"REQUIRES_APPROVAL", "migrations_dir":"recovery-migrations"}],
+  "r2_buckets": [{"binding":"SARIN_BACKUPS", "bucket_name":"REQUIRES_APPROVAL"}],
+  "required_worker_secrets": ["SARIN_BACKUP_HMAC_KEY", "SARIN_BACKUP_EXPORT_TOKEN"],
+  "required_configuration": ["SARIN_BACKUP_ACCOUNT_ID", "SARIN_BACKUP_DATABASE_ID", "SARIN_BACKUP_DOWNLOAD_ORIGIN", "SARIN_BACKUP_RECIPIENT", "SARIN_BACKUP_SOURCE_SHA", "SARIN_BACKUP_CONFIG_FILE"],
+  "operator_material": "Private, fresh, typed configuration inventory and password batch if needed; runtime has no new IAM rights. No secret values in this template."
+}

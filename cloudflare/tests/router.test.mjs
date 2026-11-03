@@ -29,6 +29,15 @@ const workloadRuntime = {
   FIREBASE_WIF_AUDIENCE: '//iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/sarin-cloudflare/providers/worker-oidc',
   FIREBASE_WIF_SERVICE_ACCOUNT_EMAIL: 'sarin-runtime@real-project.iam.gserviceaccount.com',
 };
+test('public internal paths stay closed and recovery headers never reach the singleton', async()=>{
+  for(const path of ['/api/internal/recovery-backup','/api/%69nternal/recovery-backup','/api/internal%2frecovery-backup']){
+    const response=await forwardToSingleton(new Request('https://example.test'+path,{method:'POST',headers:{'x-sarin-backup-signature':'forged'}}),()=>{throw Error('must not wake');});
+    assert.equal(response.status,404);
+  }
+  let forwarded;
+  await forwardToSingleton(new Request('https://example.test/api/session',{headers:{'x-sarin-backup-signature':'forged','x-sarin-backup-command':'private'}}),()=>({fetch:async r=>{forwarded=r;return Response.json({});}}));
+  assert.equal(forwarded.headers.get('x-sarin-backup-command'),null);assert.equal(forwarded.headers.get('x-sarin-backup-signature'),null);
+});
 test('maintenance allows only exact authenticated booking classification administration', async () => {
   const allowed = [['GET', '?businessId=demo'], ['PATCH', '']];
   for (const [method, query] of allowed) {

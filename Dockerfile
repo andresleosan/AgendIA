@@ -39,6 +39,11 @@ COPY --chown=node:node scripts/container-start.mjs ./container-start.mjs
 COPY --chown=node:node scripts/lib/cloudflare-credentials.mjs ./lib/cloudflare-credentials.mjs
 COPY --from=recovery-age /usr/local/bin/age /usr/local/bin/age
 COPY --chown=node:node scripts/lib/recovery-age.lock.json ./scripts/lib/recovery-age.lock.json
+COPY --chown=node:node scripts/lib/recovery-*.mjs scripts/lib/data-migration.mjs ./scripts/lib/
+COPY --chown=node:node shared ./shared
+COPY --chown=node:node src/lib/*.ts ./src/lib/
+COPY --chown=node:node cloudflare/migrations ./cloudflare/migrations
+COPY --from=builder --chown=node:node /app/node_modules/.pnpm/zod@4.6.7/node_modules/zod ./node_modules/zod
 USER node
 EXPOSE 3000
 # Exactly one Node process: replicas/clustering would multiply inference slots.

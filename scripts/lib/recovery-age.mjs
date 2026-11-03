@@ -156,18 +156,18 @@ function makeManifest(capture, files, components, backupId) {
 }
 
 /** @param {import('./recovery-components.mjs').ComponentCapture | any} capture
- * @param {{agePath:string,recipient:string,destination:any,signal?:AbortSignal}} options
+ * @param {{agePath:string,recipient:string,destination:any,signal?:AbortSignal,backupId?:string}} options
  * @returns {Promise<{manifest:import('./recovery-backup.mjs').BackupManifestV1,envelope:BackupEnvelope}>} */
-export async function encryptBackupComponents(capture, { agePath, recipient, destination, signal }) {
+export async function encryptBackupComponents(capture, { agePath, recipient, destination, signal, backupId = randomUUID() }) {
   const ctx = context(signal);
   try {
-    ctx.check(); if (!capture?.complete || capture.blockers?.length || !capture.sanitization) fail('CAPTURE');
+    ctx.check(); if (!uuid.safeParse(backupId).success || !capture?.complete || capture.blockers?.length || !capture.sanitization) fail('CAPTURE');
     if (!/^age1[0-9a-z]{58}$/.test(recipient)) fail('RECIPIENT');
     await verifyAgeBinary(agePath); const root = await privateRoot(capture.directory);
     if (!batchesSchema.safeParse(capture.batches).success) fail('CAPTURE');
     validateFiles(capture.files, capture.r2References, capture.batches.config.passwordSha256);
     for (const [kind, name] of [['auth', 'auth.json'], ['config', 'config.json']]) if (capture.batches[kind].sha256 !== capture.files.find(f => f.filename === name).sha256) fail('INVENTORY');
-    const backupId = randomUUID(), createdAt = Date.now(), files = [], objects = [], components = summaries();
+    const createdAt = Date.now(), files = [], objects = [], components = summaries();
     const digests = Object.fromEntries(kinds.map(kind => [kind, createHash('sha256')]));
     async function store(plain) {
       const cipher = await age(agePath, ['--encrypt', '--recipient', recipient], plain, ctx);

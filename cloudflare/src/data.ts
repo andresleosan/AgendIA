@@ -255,6 +255,7 @@ async function commitCommand(command: Extract<DataCommand, { action: 'commit' }>
       const reference: BlobReference = { key: `${policy.prefix}/${sha256}`, sha256, contentType: image.contentType, byteLength: image.bytes.length };
       // Upload before D1: failure cannot publish a dangling reference. CAS failure
       // may leave an immutable private orphan; do not delete rollback objects here.
+      // Physical GC must also respect recovery source pins; logical deletion stays immediate.
       const uploaded = await env.SARIN_FILES.put(reference.key, image.bytes, { httpMetadata: { contentType: image.contentType }, sha256 });
       if (!uploaded) throw unavailable();
       delete data[policy.field];

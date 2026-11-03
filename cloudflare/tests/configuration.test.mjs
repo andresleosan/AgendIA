@@ -12,6 +12,13 @@ test('audio AI binding stays Worker-only while A5 forwards the optional own prov
   assert.equal(result.PLATFORM_YCLOUD_API_KEY, 'synthetic-media-key');
   assert.equal(result.PLATFORM_WHATSAPP_AUDIO_ENABLED, undefined);
 });
+test('backup defaults remain off, no active backup bindings and export token stays Worker-only',()=>{
+  const config=JSON.parse(readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8'));
+  assert.equal(config.d1_databases.some(b=>b.binding==='SARIN_RECOVERY_DB'),false);
+  assert.equal(config.r2_buckets.some(b=>b.binding==='SARIN_BACKUPS'),false);
+  const runtime=runtimeEnvironment({ FIREBASE_ADMIN_PROJECT_ID:'synthetic-project',FIREBASE_ADMIN_CLIENT_EMAIL:'synthetic@example.test',FIREBASE_ADMIN_PRIVATE_KEY:'synthetic',SUPERADMIN_UID:'synthetic',SARIN_TUNNEL_URL:'https://engine.alsdevstudio.com/v1/chat/completions',OLLAMA_MAIN_MODEL:'synthetic',CF_ACCESS_CLIENT_ID:'synthetic',CF_ACCESS_CLIENT_SECRET:'synthetic',SARIN_BACKUP_EXPORT_TOKEN:'do-not-forward',SARIN_BACKUP_CLEANUP_ENABLED:'true'});
+  assert.equal(runtime.SARIN_BACKUP_ENABLED,'false');assert.equal(runtime.SARIN_BACKUP_EXPORT_TOKEN,undefined);assert.equal(runtime.SARIN_BACKUP_CLEANUP_ENABLED,undefined);
+});
 
 test('configuration has one default container and no public route, logs, traces or beta scheduling', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));

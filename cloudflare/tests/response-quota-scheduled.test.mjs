@@ -11,6 +11,7 @@ test('a quota recovery error is sanitized and does not block unrelated maintenan
       const sources = {
         '@cloudflare/containers': 'export class Container {}; export class ContainerProxy {}; export const getContainer=()=>({startAndWaitForPorts:async()=>globalThis.calls.push("wake")});',
         './response-quota-recovery.ts': 'export const recoverWorkerResponseQuota=async()=>{throw Error("private body must not log")};',
+        './recovery-backup.ts': 'export const scheduleRecoveryBackup=async()=>({phase:"disabled"}); export const sourceObjectsPinned=async()=>false; export const handleRecoveryOutbound=()=>{};',
         './admin-payment-retention.ts': 'export const cleanupAdminPaymentRetention=async()=>{globalThis.calls.push("payment");return {}};',
         './platform-support-retention.ts': 'export const cleanupPlatformSupportRetention=async()=>{globalThis.calls.push("support");return {}};',
         './platform-whatsapp-wake.ts': 'export const hasPotentialPlatformWork=async()=>true;',

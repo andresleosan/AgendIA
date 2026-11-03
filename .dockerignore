@@ -9,6 +9,8 @@ node_modules
 # Only this workspace manifest is needed by the frozen, filtered app install.
 cloudflare/**
 !cloudflare/package.json
+!cloudflare/migrations/
+!cloudflare/migrations/*.sql
 landing
 work
 docs/qa

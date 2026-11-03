@@ -4,6 +4,10 @@ import { prepareCloudflareEnvironment } from './lib/cloudflare-credentials.mjs';
 
 // No child process: the single Node PID owns the Next server and inference queue.
 export async function startContainer() {
+  if (process.env.SARIN_BACKUP_ENABLED === 'true' && process.env.SARIN_MAINTENANCE !== 'true') {
+    const { verifyAgeBinary } = await import('./scripts/lib/recovery-age.mjs');
+    await verifyAgeBinary('/usr/local/bin/age');
+  }
   const environment = await prepareCloudflareEnvironment(process.env);
   Object.assign(process.env, environment);
   await import(pathToFileURL(resolve('server.js')).href);

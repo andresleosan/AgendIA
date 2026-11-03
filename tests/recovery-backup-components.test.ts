@@ -33,6 +33,21 @@ async function fixture() {
 }
 
 describe('component capture', () => {
+  it('captures Firebase users who have never signed in with null login metadata', async () => {
+    const f = await fixture();
+    f.auth.listUsers = async () => ({ users: [{ ...user(), metadata: { creationTime: new Date(now).toUTCString(), lastSignInTime: null, lastRefreshTime: null } }] });
+    const result = await captureRecoveryComponents(f);
+    expect(result.complete).toBe(true);
+    const auth = JSON.parse(await readFile(join(result.directory, 'auth.json'), 'utf8'));
+    expect(auth.users[0].metadata).toMatchObject({ lastSignInTime: null, lastRefreshTime: null });
+  });
+  it('normalizes optional undefined SDK provider fields without dropping unknown fields', async () => {
+    const f = await fixture();
+    f.auth.listUsers = async () => ({ users: [{ ...user(), providerData: [{ uid: 'demo-user', providerId: 'google.com', displayName: undefined, email: undefined, phoneNumber: undefined, photoURL: undefined }] }] });
+    expect((await captureRecoveryComponents(f)).complete).toBe(true);
+    f.auth.listUsers = async () => ({ users: [{ ...user(), providerData: [{ uid: 'demo-user', providerId: 'google.com', unknown: 'demo' }] }] });
+    expect((await captureRecoveryComponents(f)).complete).toBe(false);
+  });
   it('captures separate windows, sanitized SQL and non-granting Auth inventory', async () => {
     const f = await fixture(), result = await captureRecoveryComponents(f);
     expect(result.complete).toBe(true); expect(result.blockers).toEqual([]);

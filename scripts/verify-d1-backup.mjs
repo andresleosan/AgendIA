@@ -57,8 +57,8 @@ export async function verifyD1Backup(inputDirectory, options = {}) {
     const { unstable_splitSqlQuery } = require('wrangler');
     const localDirectory = join(directory, `local-restore-${Date.now()}`);
     await mkdir(localDirectory, { mode: 0o700 });
-    runtime = new Miniflare(convertV4MiniflareOptions({ modules: true, script: 'export default {fetch(){return new Response(null,{status:404})}}',
-      compatibilityDate: '2026-10-13', d1Databases: { BACKUP_DB: 'sarin-recovery-local-only' }, d1Persist: join(localDirectory, 'd1'),
+    runtime = new Miniflare(convertV4MiniflareOptions({ modules: true, script: options.localWorker ?? 'export default {fetch(){return new Response(null,{status:404})}}',
+      compatibilityDate: '2026-10-13', d1Databases: { BACKUP_DB: 'sarin-recovery-local-only', SARIN_DB: 'sarin-recovery-local-only' }, d1Persist: join(localDirectory, 'd1'),
       r2Buckets: { BACKUP_FILES: 'sarin-recovery-files-local-only' }, r2Persist: join(localDirectory, 'r2'), log: new Log(LogLevel.NONE) }));
     const target = await runtime.getD1Database('BACKUP_DB');
     const commands = unstable_splitSqlQuery(bytes.toString('utf8'));
@@ -89,6 +89,10 @@ export async function verifyD1Backup(inputDirectory, options = {}) {
     }
     const result = { ok: true, verifiedAt: new Date().toISOString(), sourceSha256: manifest.sha256, sourceBytes: bytes.length, localOnly: true, schema: actualSchema,
       tables: counts, revision, r2: { objects: references.size, bytes: objectBytes, verified: true }, integrity: 'ok', statements: commands.length, dataPrinted: false, remoteMutations: false };
+    // Inspect only after the exact restored fingerprints and every object have passed.
+    if (options.inspectLocal) await options.inspectLocal({ db: target, bucket,
+      fetch: command => runtime.dispatchFetch('http://demo-recovery.test/execute', { method: 'POST', body: JSON.stringify(command) }),
+      fetchClosed: command => runtime.dispatchFetch('http://demo-recovery.test/closed', { method: 'POST', body: JSON.stringify(command) }) });
     await writePrivateFile(directory, `recovery-verification-${Date.now()}.json`, JSON.stringify(result, null, 2));
     return result;
   } finally {

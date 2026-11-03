@@ -204,7 +204,13 @@ describe('Firestore migration artifacts', () => {
       await mkdir(join(directory, 'r2-objects'));
       for (const blob of bundle.blobs) await writeFile(join(directory, 'r2-objects', blob.sha256), blob.bytes);
       await writeFile(join(directory, 'r2-backup-manifest.json'), JSON.stringify({ sourceSqlSha256: sqlHash, bucket: 'sarin-bot-files', references: bundle.manifest.blobs }));
-      const recovered = await verifyD1Backup(directory);
+      let inspected = false;
+      const recovered = await verifyD1Backup(directory, { inspectLocal: async ({ db, bucket }: any) => {
+        expect((await db.prepare('SELECT count(*) AS count FROM app_documents').first()).count).toBe(bundle.rows.length);
+        expect(await bucket.get(bundle.blobs[0].key)).not.toBeNull();
+        inspected = true;
+      } });
+      expect(inspected).toBe(true);
       expect(recovered).toMatchObject({ ok: true, localOnly: true, dataPrinted: false, remoteMutations: false, integrity: 'ok', tables: { app_documents: { count: bundle.rows.length }, app_commits: { count: 0 }, app_revision: { count: 1 } }, r2: { objects: 1, verified: true } });
       expect(recovered.schema.count).toBe((await runtime.db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE tbl_name IN ('app_commits','app_documents','app_revision') AND name NOT LIKE 'sqlite_%'").all()).results.length);
     } finally {

@@ -12,6 +12,16 @@ import { readOwnTeamMemberships } from '@/lib/server/business-team';
 import type { DataReadResult, DataCommitResult } from '../shared/data-protocol';
 
 const enabled = process.env.SARIN_RECOVERY_AUTH_TEST === 'true';
+it.skipIf(process.env.SARIN_RECOVERY_DRILL_AUTH_TEST !== 'true')('drill_auth_restores_provider_disabled_and_requires_new_login', async () => {
+  const host = process.env.FIREBASE_AUTH_EMULATOR_HOST;
+  if (!host || !/^127\.0\.0\.1:\d+$/.test(host)) throw Error('Local Auth emulator required');
+  const app = initializeApp({ projectId: 'demo-sarin-recovery-drill-rules' }, `drill-auth-${crypto.randomUUID()}`);
+  try {
+    const { probeRecoveryAuth } = await import('./recovery-fixtures');
+    const reset = await fetch(`http://${host}/emulator/v1/projects/demo-sarin-recovery-drill-rules/accounts`, { method: 'DELETE' }); expect(reset.ok).toBe(true);
+    expect((await probeRecoveryAuth(getAuth(app), host)).ok).toBe(true);
+  } finally { await deleteApp(app); }
+}, 30000);
 it.skipIf(!enabled)('auth_restore_requires_new_login_and_grants_no_business_role', async () => {
   const host = process.env.FIREBASE_AUTH_EMULATOR_HOST;
   if (!host || !/^127\.0\.0\.1:\d+$/.test(host)) throw Error('Local Auth emulator required');

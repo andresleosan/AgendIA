@@ -18,7 +18,7 @@ const passwordSchema = strict({ formatVersion: z.literal(1), observedAt: stamp, 
 const providerSchema = strict({ uid: text, providerId: text, email: z.string().optional(), displayName: z.string().optional(), phoneNumber: z.string().optional(), photoURL: z.string().optional() });
 const uidSchema = z.string().min(1).max(128);
 const authSchema = strict({ uid: uidSchema, disabled: z.boolean(), email: z.string().optional(), emailVerified: z.boolean().optional(), phoneNumber: z.string().optional(), displayName: z.string().optional(), photoURL: z.string().optional(),
-  providerData: z.array(providerSchema), metadata: strict({ creationTime: text, lastSignInTime: text.optional(), lastRefreshTime: text.nullable().optional() }), tokensValidAfterTime: text.nullable(), customClaims: z.record(z.string(), z.unknown()).optional(), observedAt: stamp });
+  providerData: z.array(providerSchema), metadata: strict({ creationTime: text, lastSignInTime: text.nullable().optional(), lastRefreshTime: text.nullable().optional() }), tokensValidAfterTime: text.nullable(), customClaims: z.record(z.string(), z.unknown()).optional(), observedAt: stamp });
 const timeSchema = strict({ startedAt: stamp, completedAt: stamp, recoverableAt: stamp }).refine(t => t.startedAt <= t.recoverableAt && t.recoverableAt <= t.completedAt);
 const maxBytes = 1024 ** 3;
 
@@ -109,6 +109,10 @@ export async function captureRecoveryComponents({ source, auth, config, director
         candidate.tokensValidAfterTime ??= null;
         const parsed = authSchema.safeParse(candidate);
         if (!parsed.success || uids.has(user.uid) || candidate.tokensValidAfterTime !== null && !Number.isFinite(Date.parse(candidate.tokensValidAfterTime)) || !Number.isFinite(Date.parse(user.metadata?.creationTime))) fail('AUTH_USER');
+        // Admin SDK exposes absent optional fields as own undefined properties.
+        const defined = value => Object.fromEntries(Object.entries(value).filter(([, value]) => value !== undefined));
+        parsed.data.metadata = defined(parsed.data.metadata);
+        parsed.data.providerData = parsed.data.providerData.map(defined);
         uids.add(user.uid); users.push(parsed.data);
         if (user.providerData.some(p => p.providerId === 'password')) passwords.add(user.uid);
       }

@@ -75,7 +75,7 @@ try {
   if (!authReady) throw new Error(`Recovery Auth emulator startup timeout: ${authOutput}`);
   const test = spawn(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', 'tests/firestore.rules.test.ts', 'tests/firestore.integration.test.ts', 'tests/waitlist-offers-firestore.test.ts', 'tests/business-team-firestore.test.ts', 'tests/response-quota-recovery-firestore.test.ts', 'tests/client-appointments-pagination-firestore.test.ts', 'tests/recovery-auth-emulator.test.ts', 'tests/recovery-admission.test.ts'], {
     stdio: 'inherit', windowsHide: true,
-    env: { ...process.env, FIRESTORE_EMULATOR_HOST: `${host}:${port}`, FIREBASE_AUTH_EMULATOR_HOST: `${host}:${authPort}`, FIREBASE_ADMIN_PROJECT_ID: 'demo-sarin-bot', SARIN_RECOVERY_AUTH_TEST: 'true' },
+    env: { ...process.env, FIRESTORE_EMULATOR_HOST: `${host}:${port}`, FIREBASE_AUTH_EMULATOR_HOST: `${host}:${authPort}`, FIREBASE_ADMIN_PROJECT_ID: 'demo-sarin-bot', SARIN_RECOVERY_AUTH_TEST: 'true', SARIN_RECOVERY_DRILL_AUTH_TEST: 'true' },
   });
   test.on('error', (error) => { console.error(error.message); stop(); process.exitCode = 1; });
   process.exitCode = await new Promise((resolve) => test.on('exit', (code) => resolve(code ?? 1)));

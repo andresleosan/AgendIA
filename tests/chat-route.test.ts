@@ -23,6 +23,7 @@ import { HttpError } from '../src/lib/server/http';
 import { readChatState, saveChatState } from '../src/lib/server/chat-state';
 import { bookingDataPolicyKey } from '../src/lib/server/booking-data-policy';
 import { businessConfigSchema } from '../src/lib/server/schemas';
+import { paginationAppointment } from './client-appointments-pagination-storage-contract';
 const now = Date.parse('2030-01-01T12:00:00Z');
 const business: Business = { id: 'business', slug: 'real', ownerUid: 'owner', ownerEmail: '', name: 'Real', category: 'Barbería', phoneWhatsApp: '573001234567', timezone: 'America/Bogota', subscription: { status: 'active', trialEndsAt: 0, currentPeriodEndsAt: now + 30 * 86400000 }, sarinConfig: { onboardingCompleted: true, tone: '', customRules: '', intakeFields: [] }, resources: [{ id: 'chair', name: 'Silla', active: true }], services: [{ id: 'cut', name: 'Corte <QA>_[dos]', durationMinutes: 30, bufferMinutes: 15, price: 20000, resourceIds: ['chair'] }], weeklySchedule: { 1: { isOpen: true, intervals: [{ start: '09:00', end: '11:00' }] } }, createdAt: now };
 const body = { mode: 'sarin_client' as const, tenantId: 'business', requestId: 'request-one', messages: [{ role: 'user' as const, content: 'Agenda corte el lunes 7 a las 9.' }] };
@@ -30,6 +31,12 @@ const request = (data: unknown = body, auth = true) => new Request('http://local
 const interpretation = (intent = 'services', selection: Record<string, string> = {}) => ({ role: 'assistant', content: 'Untrusted essay and fabricated confirmation', tool_calls: [{ id: 'call', type: 'function', function: { name: 'interpretar_solicitud', arguments: JSON.stringify({ intent, selection }) } }] });
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(now); vi.stubEnv('SARIN_CHAT_PROVIDER', 'ollama'); state.db = memoryFirestore({ 'businesses/business': business as unknown as Record<string, unknown> }).db; state.complete.mockReset(); state.whatsappReady = false; });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
+it('summarizes only twenty own upcoming visits and offers Mis citas without another inference',async()=>{
+ const rows=Object.fromEntries(Array.from({length:21},(_,i)=>{const id=`demo-chat-${i}`;return [`businesses/business/appointments/${id}`,paginationAppointment(id,{tenantId:'business',serviceName:`Demo visit ${i}!`,client:{uid:'client',name:'',email:'',intakeAnswers:{}},startAt:now+3600000+i*1000,endAt:now+5400000+i*1000})];}));
+ state.db=memoryFirestore({'businesses/business':business as unknown as Record<string,unknown>,...rows}).db;state.complete.mockResolvedValue(interpretation('own_appointments'));
+ const result=await runSarinChat({user:{uid:'client'},body:{...body,requestId:'demo-paged-chat'}});
+ expect(result.reply).toContain('Tus próximas citas');expect(result.reply).toContain('Demo visit 19!');expect(result.reply).not.toContain('Demo visit 20!');expect(result.reply).toContain('Hay más citas');expect(state.complete).toHaveBeenCalledTimes(1);
+});
 describe('current authorized business information', () => {
   const scope = { actorUid: 'client', businessId: 'business', mode: 'sarin_client' as const, channel: 'web' as const };
   const published: Business = { ...business, location: { mode: 'at_business', address: 'Dirección anterior sintética' }, services: [{ ...business.services[0], description: 'Descripción anterior sintética' }] };

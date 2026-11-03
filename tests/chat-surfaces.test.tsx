@@ -1,3 +1,4 @@
+import { clientAppointmentsFixture } from './client-appointments-page-fixtures';
 vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(), usePathname: () => '/dashboard', useRouter: () => ({ replace: vi.fn() }) }));
 vi.mock('@/hooks/use-resource-schedules', () => ({ useResourceSchedules: vi.fn(() => ({ view: null, phase: 'loading' })) }));
 import { act, createElement, Suspense, useEffect, type ReactNode } from "react";
@@ -9,7 +10,7 @@ import ClientPage from "@/app/b/[slug]/page";
 import DashboardPage from "@/app/dashboard/page";
 vi.mock('@/components/client-policy-controls', () => ({ ClientPolicyControls: () => null }));
 import { apiFetch } from "@/lib/client/api";
-import type { Business } from "@/types/firestore";
+import type { Appointment, Business } from "@/types/firestore";
 import type { ChatResponse } from '@/types/chat';
 
 const state = vi.hoisted(() => ({
@@ -41,8 +42,9 @@ describe("chat pause surfaces", () => {
   let renderer: ReactTestRenderer;
   beforeEach(() => { state.user = { uid: 'fixture-client', displayName: 'Fixture' }; state.proposal = undefined; state.confirmProposal.mockClear(); state.policyReady = true; state.policyKnown = true; state.minors = true; state.dataMode = 'general'; state.chatMount.mockClear(); state.engineMount.mockClear(); state.structuredMount.mockClear(); state.structuredUnmount.mockClear(); state.structuredProps = null; });
   beforeEach(() => { state.accountConsent = true; state.businessConsent = true; state.chat = { messages: [], isWaitingBatch: false, isGenerating: false, confirming: false, confirmationUncertain: false, error: null, quotaExhausted: false, requestAlreadyCompleted: false }; state.send.mockReset(); state.retry.mockReset(); state.publicSubscription = { status: "active", trialEndsAt: 0, currentPeriodEndsAt: 2200000000000 }; state.business = { id: "fixture-business", ownerUid: state.user.uid, name: "Negocio", slug: "negocio", subscription: state.publicSubscription, category: "Servicios", phoneWhatsApp: "", resources: [], services: [], sarinConfig: { onboardingCompleted: true, tone: "Claro", customRules: "", intakeFields: [] }, weeklySchedule: {} } as unknown as Business; vi.mocked(apiFetch).mockReset();
-    vi.mocked(apiFetch).mockImplementation(async (path, init) => {
-      const appointment = { id: "appointment", tenantId: "fixture-business", resourceId: "fixture-resource", serviceName: "Cita conservada", type: "appointment", status: "confirmed", dateKey: new URL(path, "https://example.invalid").searchParams.get("date") ?? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(Date.now()), startAt: 2177485200000, endAt: 2177487000000, reservedUntilAt: 2177487000000, startTimeStr: "09:00", endTimeStr: "09:30", createdBy: 'sarin_client', createdAt: 2177400000000, client: { uid: state.user.uid, name: "Fixture", email: "fixture@example.invalid", intakeAnswers: {} } };
+    vi.mocked(apiFetch).mockImplementation(async (path, init, uid) => {
+      const appointment = { id: "appointment", tenantId: "fixture-business", resourceId: "fixture-resource", serviceId: "fixture-service", serviceName: "Cita conservada", type: "appointment", status: "confirmed", dateKey: new URL(path, "https://example.invalid").searchParams.get("date") ?? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(Date.now()), startAt: 2177485200000, endAt: 2177487000000, reservedUntilAt: 2177487000000, startTimeStr: "09:00", endTimeStr: "09:30", createdBy: 'sarin_client', createdAt: 2177400000000, client: { uid: state.user.uid, name: "Fixture", email: "fixture@example.invalid", intakeAnswers: {} } };
+      if (path.endsWith('/appointments/query') || /\/appointments\/[^/]+$/.test(path)) return clientAppointmentsFixture([appointment as Appointment], path, init, uid);
       return init?.method ? { appointment: { ...appointment, status: 'cancelled_by_owner' } } : { appointments: [appointment] };
     });
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ business: { id: "fixture-business", name: "Negocio sintetico", phoneWhatsApp: "", services: [], subscription: state.publicSubscription } })));

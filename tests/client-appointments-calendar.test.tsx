@@ -1,3 +1,5 @@
+vi.mock('@/components/auth-provider', () => ({ useAuth: () => ({ authEpoch: 1, isCurrentSession: () => true }) }));
+import { clientAppointmentsFixture } from './client-appointments-page-fixtures';
 import { act, createElement, StrictMode } from 'react';
 import { create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -6,7 +8,7 @@ import { apiFetch } from '@/lib/client/api';
 import type { Appointment, TenantResource, TenantService } from '@/types/firestore';
 
 const state = vi.hoisted(() => ({ rows: [] as Appointment[], readMode: 'ready', resolveRead: null as null | ((value: unknown) => void), resolveMutation: null as null | ((value: unknown) => void), calendar: vi.fn(), image: vi.fn(), download: vi.fn() }));
-vi.mock('@/lib/client/api', () => ({ apiFetch: vi.fn(), errorMessage: (error: Error) => error.message }));
+vi.mock('@/lib/client/api', async original => ({ ...await original<typeof import('@/lib/client/api')>(), apiFetch: vi.fn() }));
 vi.mock('@/lib/client/appointment-calendar', () => ({ createAppointmentCalendar: state.calendar }));
 vi.mock('@/lib/client/appointment-image', () => ({ createAppointmentImage: state.image }));
 vi.mock('@/lib/utils/icsGenerator', () => ({ downloadICSFile: state.download }));
@@ -51,12 +53,13 @@ describe('explicit calendar file export from own appointments', () => {
     state.calendar.mockReset().mockResolvedValue('BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n');
     state.image.mockReset().mockResolvedValue(new Blob(['synthetic'], { type: 'image/png' })); state.download.mockReset();
     events = new EventTarget(); vi.stubGlobal('window', events);
-    vi.mocked(apiFetch).mockReset().mockImplementation((_path, init, uid) => {
-      if (_path.endsWith('/reminders')) return Promise.resolve({ businessId: _path.split('/')[3], ownerUid: uid, serverNow: now, preference: { enabled: false, revision: 0, status: 'disabled', offsetMinutes: 1440 }, reminders: [] });
-      if (init?.method) return new Promise(resolve => { state.resolveMutation = resolve; });
+    vi.mocked(apiFetch).mockReset().mockImplementation((path, init, uid) => {
+      if (path.endsWith('/reminders')) return Promise.resolve({ businessId: path.split('/')[3], ownerUid: uid, serverNow: now, preference: { enabled: false, revision: 0, status: 'disabled', offsetMinutes: 1440 }, reminders: [] });
+      if (!path.endsWith('/query') && !init?.method) return Promise.resolve(clientAppointmentsFixture(state.rows, path, init, uid));
+      if (init?.method && !path.endsWith('/query')) return new Promise(resolve => { state.resolveMutation = resolve; });
       if (state.readMode === 'error') return Promise.reject(new Error('Lectura sintética no disponible'));
       if (state.readMode === 'deferred') return new Promise(resolve => { state.resolveRead = resolve; });
-      return Promise.resolve({ appointments: state.rows });
+      return Promise.resolve(clientAppointmentsFixture(state.rows, path, init, uid));
     });
   });
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -70,13 +73,13 @@ describe('explicit calendar file export from own appointments', () => {
     expect(JSON.stringify(state.calendar.mock.calls)).not.toMatch(/demo-private-client|PRIVATE_|private@example|573000000000|intake|beneficiary|notes/);
     expect(state.download.mock.calls).toEqual([['BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n', 'cita-2026-10-17.ics']]);
     expect(text(renderer!.root)).toContain('Archivo de calendario descargado. Los cambios y cancelaciones se consultan en Mis citas.');
-    expect(apiFetch).not.toHaveBeenCalled(); expect(state.image).not.toHaveBeenCalled();
+    expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0); expect(state.image).not.toHaveBeenCalled();
   });
   it.each(['calendar', 'image', 'cancel'])('honors a synchronous workspace mutex rejection before %s begins', async kind => {
     await mount({ onActionLockChange: locked => !locked });
     if (kind === 'cancel') await act(async () => button('Cancelar cita').props.onClick());
     await act(async () => { void button(kind === 'calendar' ? 'Añadir al calendario' : kind === 'image' ? 'Guardar imagen de la cita' : 'Sí, cancelar cita').props.onClick(); });
-    expect(state.calendar).not.toHaveBeenCalled(); expect(state.image).not.toHaveBeenCalled(); expect(apiFetch).not.toHaveBeenCalled();
+    expect(state.calendar).not.toHaveBeenCalled(); expect(state.image).not.toHaveBeenCalled(); expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
   });
 
   it('offers export only for valid own future confirmed appointments and keeps the PNG action', async () => {
@@ -95,7 +98,7 @@ describe('explicit calendar file export from own appointments', () => {
     expect(calendarButtons()[0].props.disabled).toBe(false); expect(button('Cancelar cita')).toBeDefined();
     const attempts = state.calendar.mock.calls.length; await refresh(); expect(state.calendar).toHaveBeenCalledTimes(attempts);
     await act(async () => calendarButtons()[0].props.onClick());
-    expect(text(renderer!.root)).toContain('Archivo de calendario descargado.'); expect(apiFetch).not.toHaveBeenCalled();
+    expect(text(renderer!.root)).toContain('Archivo de calendario descargado.'); expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
   });
 
   it('blocks duplicate calendar exports, PNG, cancellation and rebooking while calendar preparation is pending', async () => {
@@ -109,8 +112,8 @@ describe('explicit calendar file export from own appointments', () => {
     await act(async () => { retainedCalendar(); retainedImage(); retainedCancel(); });
     await act(async () => button('Historial').props.onClick()); expect(button('Volver a reservar').props.disabled).toBe(true);
     await act(async () => { button('Volver a reservar').props.onClick(); retainedRebook(); });
-    expect(state.calendar).toHaveBeenCalledOnce(); expect(state.image).not.toHaveBeenCalled(); expect(onRebook).not.toHaveBeenCalled(); expect(apiFetch).not.toHaveBeenCalled();
-    await pending.finish(); expect(state.download).toHaveBeenCalledOnce();
+    expect(state.calendar).toHaveBeenCalledOnce(); expect(state.image).not.toHaveBeenCalled(); expect(onRebook).not.toHaveBeenCalled(); expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
+    await pending.finish(); expect(state.download).not.toHaveBeenCalled();
   });
 
   it.each(['cancel', 'image'])('blocks a retained calendar action while %s is pending', async operation => {
@@ -132,7 +135,7 @@ describe('explicit calendar file export from own appointments', () => {
     state.rows = [appointment(undefined, { client: { uid: 'other', name: '', email: '', intakeAnswers: {} } })];
     await update({ userId: 'other' }); vi.mocked(apiFetch).mockClear();
     await act(async () => { retained(); });
-    expect(state.image).not.toHaveBeenCalled(); expect(apiFetch).not.toHaveBeenCalled();
+    expect(state.image).not.toHaveBeenCalled(); expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
     expect(calendarButtons()[0].props.disabled).toBe(false);
     await act(async () => calendarButtons()[0].props.onClick()); expect(state.download).toHaveBeenCalledOnce();
   });
@@ -153,7 +156,7 @@ describe('explicit calendar file export from own appointments', () => {
     else if (change === 'clock') vi.setSystemTime(state.rows[0].startAt);
     else if (change === 'read-error') state.readMode = 'error';
     await refresh(); await pending.finish();
-    expect(state.download).not.toHaveBeenCalled(); expect(text(renderer!.root)).not.toContain('Archivo de calendario descargado.'); expect(apiFetch).not.toHaveBeenCalled();
+    expect(state.download).not.toHaveBeenCalled(); expect(text(renderer!.root)).not.toContain('Archivo de calendario descargado.'); expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
     await update(); expect(state.download).not.toHaveBeenCalled();
   });
 
@@ -177,7 +180,7 @@ describe('explicit calendar file export from own appointments', () => {
     if (change === 'read-error' || change === 'retry') { state.readMode = 'error'; await refresh(); if (change === 'read-error') expect(calendarButtons()[0].props.disabled).toBe(true); }
     if (change === 'retry') { state.readMode = 'deferred'; await act(async () => button('Reintentar cargar citas').props.onClick()); }
     vi.mocked(apiFetch).mockClear(); await act(async () => retained());
-    expect(state.calendar).not.toHaveBeenCalled(); expect(state.download).not.toHaveBeenCalled(); expect(apiFetch).not.toHaveBeenCalled();
+    expect(state.calendar).not.toHaveBeenCalled(); expect(state.download).not.toHaveBeenCalled(); expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
   });
 
   it('allows the current StrictMode handler and rejects its retained action after unmount', async () => {

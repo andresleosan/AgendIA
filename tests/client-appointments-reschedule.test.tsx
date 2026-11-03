@@ -1,3 +1,5 @@
+vi.mock('@/components/auth-provider', () => ({ useAuth: () => ({ authEpoch: 1, isCurrentSession: () => true }) }));
+import { clientAppointmentsFixture } from './client-appointments-page-fixtures';
 import { act, createElement, StrictMode } from 'react';
 import { create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -6,7 +8,7 @@ import { apiFetch } from '@/lib/client/api';
 import type { Appointment, TenantService } from '@/types/firestore';
 
 const state = vi.hoisted(() => ({ rows: [] as Appointment[], failRead: false, image: vi.fn(), calendar: vi.fn() }));
-vi.mock('@/lib/client/api', () => ({ apiFetch: vi.fn(), errorMessage: (error: Error) => error.message }));
+vi.mock('@/lib/client/api', async original => ({ ...await original<typeof import('@/lib/client/api')>(), apiFetch: vi.fn() }));
 vi.mock('@/lib/client/appointment-image', () => ({ createAppointmentImage: state.image }));
 vi.mock('@/lib/client/appointment-calendar', () => ({ createAppointmentCalendar: state.calendar }));
 vi.mock('@/lib/utils/icsGenerator', () => ({ downloadICSFile: vi.fn() }));
@@ -25,9 +27,9 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(now); events = new EventTarget(); vi.stubGlobal('window', events);
   state.rows = [source]; state.failRead = false; state.image.mockReset(); state.calendar.mockReset();
   props = { businessId: 'demo-shop', businessName: 'Negocio', userId: 'demo-client', now, services: [service], onReschedule: vi.fn(), reschedulingEnabled: true };
-  vi.mocked(apiFetch).mockReset().mockImplementation(async (path, _init, uid) => {
+  vi.mocked(apiFetch).mockReset().mockImplementation(async (path, init, uid) => {
     if (path.endsWith('/reminders')) return { businessId: path.split('/')[3], ownerUid: uid, serverNow: now, preference: { enabled: false, revision: 0, status: 'disabled', offsetMinutes: 1440 }, reminders: [] };
-    if (state.failRead) throw new Error('Lectura fallida'); return { appointments: state.rows };
+    if (state.failRead) throw new Error('Lectura fallida'); return clientAppointmentsFixture(state.rows, path, init, uid);
   });
 });
 afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; vi.unstubAllGlobals(); vi.useRealTimers(); });
@@ -46,7 +48,7 @@ it('offers a manual schedule change only for own future confirmed appointments a
   state.rows.push({ ...source, id: 'past', startAt: now - 1000 }, { ...source, id: 'cancelled', status: 'cancelled_by_client' }, { ...source, id: 'other', client: { ...source.client!, uid: 'other' } }, { ...source, id: 'manual', type: 'manual_block' });
   await mount(); const actions = renderer!.root.findAllByType('button').filter(node => text(node) === 'Cambiar horario'); expect(actions).toHaveLength(1);
   vi.mocked(apiFetch).mockClear(); await act(async () => actions[0].props.onClick());
-  expect(props.onReschedule).toHaveBeenCalledExactlyOnceWith(source); expect(apiFetch).not.toHaveBeenCalled();
+  expect(props.onReschedule).toHaveBeenCalledExactlyOnceWith(source); expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
 });
 
 it.each(['source', 'permission', 'read', 'clock', 'account', 'unmount'])('rejects retained change handlers after %s changes', async change => {
@@ -57,7 +59,7 @@ it.each(['source', 'permission', 'read', 'clock', 'account', 'unmount'])('reject
   if (change === 'clock') vi.setSystemTime(source.startAt);
   if (change === 'account') await update({ userId: 'other' });
   if (change === 'unmount') { await act(async () => renderer!.unmount()); renderer = undefined; }
-  vi.mocked(apiFetch).mockClear(); await act(async () => retained()); expect(props.onReschedule).not.toHaveBeenCalled(); expect(apiFetch).not.toHaveBeenCalled();
+  vi.mocked(apiFetch).mockClear(); await act(async () => retained()); expect(props.onReschedule).not.toHaveBeenCalled(); expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
 });
 
 it('locks change, PNG, ICS and cancellation while the workspace owns an operation, including retained handlers', async () => {
@@ -66,7 +68,7 @@ it('locks change, PNG, ICS and cancellation while the workspace owns an operatio
   await update({ actionsLocked: true }); vi.mocked(apiFetch).mockClear();
   expect(button('Cambiar horario').props.disabled).toBe(true); expect(button('Sí, cancelar cita').props.disabled).toBe(true);
   await act(async () => { retained.forEach(handler => handler()); cancel(); });
-  expect(props.onReschedule).not.toHaveBeenCalled(); expect(state.image).not.toHaveBeenCalled(); expect(state.calendar).not.toHaveBeenCalled(); expect(apiFetch).not.toHaveBeenCalled();
+  expect(props.onReschedule).not.toHaveBeenCalled(); expect(state.image).not.toHaveBeenCalled(); expect(state.calendar).not.toHaveBeenCalled(); expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
 });
 
 it('hands the action lock to a reschedule workspace before another retained handler can run in the same event', async () => {

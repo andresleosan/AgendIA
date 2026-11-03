@@ -1,5 +1,8 @@
 {
   "indexes": [
+    {"collectionGroup":"appointments","queryScope":"COLLECTION","fields":[{"fieldPath":"client.uid","order":"ASCENDING"},{"fieldPath":"type","order":"ASCENDING"},{"fieldPath":"startAt","order":"ASCENDING"},{"fieldPath":"id","order":"ASCENDING"}]},
+    {"collectionGroup":"appointments","queryScope":"COLLECTION","fields":[{"fieldPath":"client.uid","order":"ASCENDING"},{"fieldPath":"type","order":"ASCENDING"},{"fieldPath":"status","order":"ASCENDING"},{"fieldPath":"startAt","order":"ASCENDING"},{"fieldPath":"id","order":"ASCENDING"},{"fieldPath":"endAt","order":"ASCENDING"}]},
+    {"collectionGroup":"appointments","queryScope":"COLLECTION","fields":[{"fieldPath":"client.uid","order":"ASCENDING"},{"fieldPath":"type","order":"ASCENDING"},{"fieldPath":"status","order":"ASCENDING"},{"fieldPath":"startAt","order":"DESCENDING"},{"fieldPath":"id","order":"ASCENDING"},{"fieldPath":"endAt","order":"ASCENDING"}]},
     { "collectionGroup": "responseQuotaTurns", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }, { "fieldPath": "__name__", "order": "ASCENDING" }] },
     { "collectionGroup": "responseQuotaTurns", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "__name__", "order": "ASCENDING" }] },
     { "collectionGroup": "businessMemberships", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "memberUid", "order": "ASCENDING" }, { "fieldPath": "businessId", "order": "ASCENDING" }] },

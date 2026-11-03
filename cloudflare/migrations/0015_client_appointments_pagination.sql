@@ -1,0 +1,4 @@
+-- Additive: preserve the preceding owner-client-record query plans.
+CREATE INDEX IF NOT EXISTS app_client_page_ascending ON app_documents(parent,json_extract(data,'$.client.uid'),json_extract(data,'$.type'),json_extract(data,'$.startAt') ASC,json_extract(data,'$.id') ASC,path);
+CREATE INDEX IF NOT EXISTS app_client_page_status_ascending ON app_documents(parent,json_extract(data,'$.client.uid'),json_extract(data,'$.type'),json_extract(data,'$.status'),json_extract(data,'$.startAt') ASC,json_extract(data,'$.id') ASC,json_extract(data,'$.endAt') ASC,path);
+CREATE INDEX IF NOT EXISTS app_client_page_status_descending ON app_documents(parent,json_extract(data,'$.client.uid'),json_extract(data,'$.type'),json_extract(data,'$.status'),json_extract(data,'$.startAt') DESC,json_extract(data,'$.id') ASC,json_extract(data,'$.endAt') ASC,path);

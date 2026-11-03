@@ -240,7 +240,7 @@ describe('additive client record index composition (no physical backend claim)',
     const field = (fieldPath: string, order = 'ASCENDING') => ({ fieldPath, order });
     for (const status of [[], [field('status')]]) expect(indexes.indexes).toContainEqual({ collectionGroup: 'appointments', queryScope: 'COLLECTION',
       fields: [field('client.uid'), field('type'), ...status, field('startAt', 'DESCENDING'), field('id')] });
-    expect(indexes.indexes).toHaveLength(18);
+    expect(indexes.indexes).toHaveLength(21);
     expect(indexes.indexes).toContainEqual({ collectionGroup: 'waitlistRequests', queryScope: 'COLLECTION', fields: [field('request.dateKey'), field('request.createdAt'), field('request.id')] });
     expect(indexes.indexes).toContainEqual({ collectionGroup: 'attendanceEvents', queryScope: 'COLLECTION', fields: [field('appointmentId'), field('sequence', 'DESCENDING')] });
     expect(indexes.indexes).toContainEqual({ collectionGroup: 'appointments', queryScope: 'COLLECTION', fields: [field('client.uid'), field('status'), field('type'), field('startAt')] });

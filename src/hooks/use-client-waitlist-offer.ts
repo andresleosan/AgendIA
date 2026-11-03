@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/components/auth-provider';
 import { apiFetch, errorMessage } from '@/lib/client/api';
 import { clientWaitlistOfferCurrentSchema, clientWaitlistOfferRecoverySchema, waitlistOfferCloseResultSchema, waitlistOfferConfirmationSchema, type ClientWaitlistOfferRecovery, type WaitlistOfferBookingProof } from '@/lib/waitlist-offers';
-export type ClientWaitlistOfferInput = { businessId: string; userId: string; authEpoch: number; enabled: boolean; acquireAction: () => false | (() => void); onConfirmed: () => void };
+export type ClientWaitlistOfferInput = { businessId: string; userId: string; authEpoch: number; enabled: boolean; acquireAction: () => false | (() => void); onConfirmed: (appointmentId: string) => void };
 type State = { recovery: ClientWaitlistOfferRecovery | null; loading: boolean; busy: boolean; uncertain: boolean; error: string | null; notice: string | null; checked: boolean };
 const blank = (): State => ({ recovery: null, loading: false, busy: false, uncertain: false, error: null, notice: null, checked: false });
 function runtime(key: string) {
@@ -57,7 +57,7 @@ export function useClientWaitlistOffer(input: ClientWaitlistOfferInput) {
       r.generation++; r.confirmBody = null; r.proposalBody = null;
       r.primary = null; r.closing = null;
       patch({ recovery: value, busy: false, uncertain: false, loading: false, error: null, checked: true }); release();
-      if (value.proof && !r.notified.has(value.offer.id)) { r.notified.add(value.offer.id); current.current.input.onConfirmed(); }
+      if (value.proof && !r.notified.has(value.offer.id)) { r.notified.add(value.offer.id); current.current.input.onConfirmed(value.proof.appointmentId); }
     } else {
       const recoveredProposal = r.proposalBody !== null && value.proposal !== null && r.confirmBody === null;
       if (recoveredProposal) r.proposalBody = null;

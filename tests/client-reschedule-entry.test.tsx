@@ -59,7 +59,7 @@ it.each(['account', 'consent', 'ready', 'local-action', 'chat'])('blocks a retai
 });
 
 it('invalidates a changed current source and discards the entry across an account change', async () => {
-  await mount(); await start(); await act(async () => history().props.onAppointmentsRead([{ ...source, rescheduleRevision: 1 }]));
+  await mount(); await start(); await act(async () => history().props.onAppointmentVerified(source.id, { ...source, rescheduleRevision: 1 }));
   expect(renderer!.root.findByType(AppointmentReschedule).props.sourceCurrent).toBe(false);
   state.uid = 'other'; await update(); expect(renderer!.root.findAllByType(AppointmentReschedule)).toHaveLength(0);
 });

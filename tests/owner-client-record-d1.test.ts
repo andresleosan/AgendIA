@@ -81,7 +81,7 @@ it('d1CompositeTiesAndFiltersUseIndexes', async () => {
       if (index === 1) expect(result.bindings).toContain(anchor.id);
       expect(result.bindings.at(-1)).toBe((spec as Extract<DataRead, { kind: 'query' }>).limit);
       const details = result.plan.map((row: { detail: string }) => row.detail).join('\n');
-      expect(details).toContain(`USING INDEX app_client_record_${filter === 'all' ? 'all' : 'status'}`);
+      expect(details).toMatch(filter === 'all' ? /USING INDEX app_client_(record_all|page_ascending)/ : /USING INDEX app_client_(record_status|page_status_(ascending|descending))/);
       expect(details).not.toMatch(/SCAN app_documents|TEMP B-TREE/);
       evidence.push({ filter, block: ['first', 'tail', 'older'][index], ...result });
     }

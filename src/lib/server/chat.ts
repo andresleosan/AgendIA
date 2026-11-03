@@ -23,6 +23,7 @@ import { readAppointments, readAvailability } from './bookings';
 import { chatSchema } from './schemas';
 import { createBookingProposal, recoverBookingProposal } from './booking-proposals';
 import { assertBusinessAllowsInference } from './booking-data-policy';
+import { readClientAppointmentsPage } from './client-appointments-pagination';
 
 interface CachedResponse { fingerprint: string; response: ChatResponse; reservation: ResponseQuotaReservation; expiresAt: number; }
 const responses = new WeakMap<ReturnType<typeof getAdminDb>, Map<string, CachedResponse>>();
@@ -170,8 +171,8 @@ export async function runSarinChat({ user, body: suppliedBody, signal, channel =
           if (selection.dateKey && selection.serviceId) data.availability = await readAvailability(business, selection.dateKey, selection.serviceId, selection.resourceId);
           break;
         case 'own_appointments': {
-          const snapshot = await db.collection('businesses').doc(business.id).collection('appointments').where('client.uid', '==', user.uid).get();
-          data.appointments = snapshot.docs.map(doc => doc.data() as Appointment).filter(item => item.tenantId === business!.id && item.client?.uid === user.uid && item.type === 'appointment'); break;
+          const page = await readClientAppointmentsPage(user, business.id, { version: 1, view: 'upcoming' }, db);
+          data.appointments = page.rows; data.moreAppointments = page.nextCursor !== null; break;
         }
         case 'owner_agenda': if (selection.dateKey) data.appointments = await readAppointments(business.id, selection.dateKey, user); break;
         case 'owner_usage': data.remainingResponses = (await getResponseQuota(business.id)).currentPeriod?.remainingResponses; break;

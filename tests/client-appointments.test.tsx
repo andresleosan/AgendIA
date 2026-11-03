@@ -1,3 +1,5 @@
+vi.mock('@/components/auth-provider', () => ({ useAuth: () => ({ authEpoch: 1, isCurrentSession: () => true }) }));
+import { clientAppointmentsFixture } from './client-appointments-page-fixtures';
 import { act, createElement } from "react";
 import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,7 +16,7 @@ const state = vi.hoisted(() => ({
   reads: [] as string[],
   createImage: vi.fn(),
 }));
-vi.mock("@/lib/client/api", () => ({ apiFetch: vi.fn(), errorMessage: (error: Error) => error.message }));
+vi.mock('@/lib/client/api', async original => ({ ...await original<typeof import('@/lib/client/api')>(), apiFetch: vi.fn() }));
 vi.mock("@/lib/client/appointment-image", () => ({ createAppointmentImage: state.createImage }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -23,7 +25,7 @@ const props = { businessId: "business-fixture", businessName: "Barbería de prue
 const text = (node: ReactTestInstance | string): string => typeof node === "string" ? node : node.children.map(text).join("");
 function appointment(id: string, start: string, status: Appointment["status"] = "confirmed", extra: Partial<Appointment> = {}): Appointment {
   const startAt = Date.parse(start);
-  return { id, tenantId: props.businessId, type: "appointment", status, dateKey: "2026-10-16", startAt, endAt: startAt + 30 * 60000, reservedUntilAt: startAt + 40 * 60000, startTimeStr: "10:00", endTimeStr: "10:30", serviceName: id, resourceId: "chair", serviceId: "haircut", client: { uid: props.userId, name: "Cliente", email: "cliente@example.invalid", intakeAnswers: {} }, createdBy: "sarin_client", createdAt: now - 86400000, ...extra };
+  return { id: id.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9_-]/g, '-'), tenantId: props.businessId, type: "appointment", status, dateKey: "2026-10-16", startAt, endAt: startAt + 30 * 60000, reservedUntilAt: startAt + 40 * 60000, startTimeStr: "10:00", endTimeStr: "10:30", serviceName: id, resourceId: "chair", serviceId: "haircut", client: { uid: props.userId, name: "Cliente", email: "cliente@example.invalid", intakeAnswers: {} }, createdBy: "sarin_client", createdAt: now - 86400000, ...extra };
 }
 const button = (renderer: ReactTestRenderer, label: string) => renderer.root.findAllByType("button").find(node => text(node) === label)!;
 const cards = (renderer: ReactTestRenderer) => renderer.root.findAllByType("article");
@@ -40,9 +42,9 @@ describe("the customer's appointments within one business", () => {
     state.rows = [appointment("Más tarde", "2026-10-17T15:00:00Z"), appointment("Primera cita", "2026-10-16T15:00:00Z")];
     vi.mocked(apiFetch).mockImplementation((path, init, uid) => {
       if (path.endsWith('/reminders')) return Promise.resolve({ businessId: path.split('/')[3], ownerUid: uid, serverNow: now, preference: { enabled: false, revision: 0, status: 'disabled', offsetMinutes: 1440 }, reminders: [] });
-      if (init?.method) return Promise.resolve({});
+      if (init?.method && !path.endsWith('/query')) return Promise.resolve({});
       state.reads.push(path); state.signals.push(init!.signal as AbortSignal);
-      if (state.emitImmediately) return Promise.resolve({ appointments: state.rows });
+      if (state.emitImmediately) return Promise.resolve(clientAppointmentsFixture(state.rows, path, init, uid));
       return new Promise((resolve, reject) => { state.resolve = resolve; state.reject = reject; });
     });
   });
@@ -54,7 +56,7 @@ describe("the customer's appointments within one business", () => {
     await render();
     expect(cards(renderer).map(text)).toEqual([expect.stringContaining("Primera cita"), expect.stringContaining("Más tarde")]);
     expect(text(renderer.root)).not.toMatch(/Privada de otra persona|Bloqueo privado|Sin identidad/);
-    expect(state.reads).toEqual(["/api/businesses/business-fixture/appointments?view=mine"]);
+    expect(state.reads).toEqual(["/api/businesses/business-fixture/appointments/query"]);
   });
   it('shows beneficiary only for its own booking and keeps legacy identity unspecified', async () => {
     state.rows[0].beneficiary = { kind: 'represented_minor', displayName: 'SYNTHETIC_PRIVATE_SUBJECT', representativeRole: 'parent' };
@@ -92,20 +94,20 @@ describe("the customer's appointments within one business", () => {
 
   it("requires confirmation, blocks duplicate submissions, and moves the saved cancellation into history", async () => {
     let resolve!: (response: unknown) => void;
-    vi.mocked(apiFetch).mockImplementation((_path, init) => init?.method ? new Promise(done => { resolve = done; }) : Promise.resolve({ appointments: state.rows }));
+    vi.mocked(apiFetch).mockImplementation((path, init, uid) => init?.method && !path.endsWith('/query') ? new Promise(done => { resolve = done; }) : Promise.resolve(clientAppointmentsFixture(state.rows, path, init, uid)));
     state.rows = [appointment("Corte confirmado", "2026-10-16T15:00:00Z")];
     await render();
     await act(async () => button(renderer, "Cancelar cita").props.onClick());
-    expect(apiFetch).not.toHaveBeenCalled();
+    expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
     const confirm = button(renderer, "Sí, cancelar cita");
     let cancellation!: Promise<void>;
     await act(async () => { cancellation = confirm.props.onClick(); });
-    expect(apiFetch).toHaveBeenCalledTimes(1);
-    expect(apiFetch).toHaveBeenCalledWith("/api/businesses/business-fixture/appointments", { method: "PATCH", body: JSON.stringify({ appointmentId: "Corte confirmado" }) });
+    expect(vi.mocked(apiFetch).mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(1);
+    expect(apiFetch).toHaveBeenCalledWith("/api/businesses/business-fixture/appointments", { method: "PATCH", body: JSON.stringify({ appointmentId: "Corte-confirmado" }) }, props.userId, expect.any(Function));
     expect(button(renderer, "Cancelando…").props.disabled).toBe(true);
     await act(async () => { confirm.props.onClick(); });
-    expect(apiFetch).toHaveBeenCalledTimes(1);
-    await act(async () => { resolve({ appointment: { ...state.rows[0], status: "cancelled_by_client" } }); await cancellation; });
+    expect(vi.mocked(apiFetch).mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(1);
+    await act(async () => { state.rows = [{ ...state.rows[0], status: "cancelled_by_client" }]; resolve({ appointment: state.rows[0] }); await cancellation; });
     expect(text(renderer.root)).toContain("Cita cancelada");
     expect(text(renderer.root)).toContain("Cancelada por ti");
     expect(button(renderer, "Historial").props["aria-pressed"]).toBe(true);
@@ -114,11 +116,11 @@ describe("the customer's appointments within one business", () => {
 
   it("lets the customer keep the appointment and preserves it when cancellation is rejected", async () => {
     state.rows = [appointment("Cita que se conserva", "2026-10-16T15:00:00Z")];
-    vi.mocked(apiFetch).mockImplementation(async (_path, init) => { if (init?.method) throw new Error("No se pudo cancelar; vuelve a intentarlo."); return { appointments: state.rows }; });
+    vi.mocked(apiFetch).mockImplementation(async (path, init, uid) => { if (init?.method && !path.endsWith('/query')) throw new Error("No se pudo cancelar; vuelve a intentarlo."); return clientAppointmentsFixture(state.rows, path, init, uid); });
     await render();
     await act(async () => button(renderer, "Cancelar cita").props.onClick());
     await act(async () => button(renderer, "Conservar cita").props.onClick());
-    expect(apiFetch).not.toHaveBeenCalled();
+    expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
     expect(button(renderer, "Sí, cancelar cita")).toBeUndefined();
     await act(async () => button(renderer, "Cancelar cita").props.onClick());
     await act(async () => button(renderer, "Sí, cancelar cita").props.onClick());
@@ -134,8 +136,8 @@ describe("the customer's appointments within one business", () => {
     await act(async () => state.reject!(new Error("Sin conexión para leer citas")));
     expect(text(renderer.root)).toContain("Sin conexión para leer citas");
     await act(async () => button(renderer, "Reintentar cargar citas").props.onClick());
-    expect(state.signals[0].aborted).toBe(true);
-    await act(async () => state.resolve!({ appointments: state.rows }));
+    expect(state.signals).toHaveLength(2);
+    await act(async () => state.resolve!(clientAppointmentsFixture(state.rows, `/api/businesses/${props.businessId}/appointments/query`, undefined, props.userId)));
     expect(text(renderer.root)).toContain("Primera cita");
     expect(text(renderer.root)).not.toContain("Sin conexión para leer citas");
   });
@@ -154,12 +156,12 @@ describe("the customer's appointments within one business", () => {
     await act(async () => button(renderer, "Cancelar cita").props.onClick());
     vi.setSystemTime(Date.parse("2026-10-16T01:02:00Z"));
     await act(async () => button(renderer, "Sí, cancelar cita").props.onClick());
-    expect(apiFetch).not.toHaveBeenCalled();
+    expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
   });
 
   it("does not claim a cancellation succeeded if the server returns a different customer's appointment", async () => {
     state.rows = [appointment("Cita original", "2026-10-16T15:00:00Z")];
-    vi.mocked(apiFetch).mockImplementation(async (_path, init) => init?.method ? { appointment: { ...state.rows[0], status: "cancelled_by_client", client: { uid: "other" } } } : { appointments: state.rows });
+    vi.mocked(apiFetch).mockImplementation(async (path, init, uid) => init?.method && !path.endsWith('/query') ? { appointment: { ...state.rows[0], status: "cancelled_by_client", client: { uid: "other" } } } : clientAppointmentsFixture(state.rows, path, init, uid));
     await render();
     await act(async () => button(renderer, "Cancelar cita").props.onClick());
     await act(async () => button(renderer, "Sí, cancelar cita").props.onClick());
@@ -174,7 +176,7 @@ describe("the customer's appointments within one business", () => {
     const staleResolve = state.resolve!;
     await act(async () => renderer.update(createElement(ClientAppointments, { ...props, userId: "new-client" })));
     expect(text(renderer.root)).not.toContain("Primera cita");
-    await act(async () => staleResolve({ appointments: state.rows }));
+    await act(async () => staleResolve(clientAppointmentsFixture(state.rows, `/api/businesses/${props.businessId}/appointments/query`, undefined, props.userId)));
     expect(text(renderer.root)).not.toContain("Primera cita");
     expect(state.signals[0].aborted).toBe(true);
   });
@@ -189,7 +191,7 @@ describe("the customer's appointments within one business", () => {
 
   it("ignores a late cancellation result after switching accounts and businesses", async () => {
     let finish!: (response: unknown) => void;
-    vi.mocked(apiFetch).mockImplementation((_path, init) => init?.method ? new Promise(resolve => { finish = resolve; }) : Promise.resolve({ appointments: state.rows }));
+    vi.mocked(apiFetch).mockImplementation((path, init, uid) => init?.method && !path.endsWith('/query') ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(clientAppointmentsFixture(state.rows, path, init, uid)));
     await render();
     await act(async () => button(renderer, "Cancelar cita").props.onClick());
     let cancellation!: Promise<void>;
@@ -204,19 +206,21 @@ describe("the customer's appointments within one business", () => {
     const events = new EventTarget();
     vi.stubGlobal("window", events);
     let reads = 0, oldRead!: (response: unknown) => void;
-    vi.mocked(apiFetch).mockImplementation((_path, init, uid) => {
-      if (_path.endsWith('/reminders')) return Promise.resolve({ businessId: _path.split('/')[3], ownerUid: uid, serverNow: now, preference: { enabled: false, revision: 0, status: 'disabled', offsetMinutes: 1440 }, reminders: [] });
-      if (init?.method) return Promise.resolve({ appointment: { ...state.rows[0], status: "cancelled_by_client" } });
-      if (++reads === 1) return Promise.resolve({ appointments: state.rows });
+    vi.mocked(apiFetch).mockImplementation((path, init, uid) => {
+      if (path.endsWith('/reminders')) return Promise.resolve({ businessId: path.split('/')[3], ownerUid: uid, serverNow: now, preference: { enabled: false, revision: 0, status: 'disabled', offsetMinutes: 1440 }, reminders: [] });
+      if (init?.method && !path.endsWith('/query')) { state.rows = [{ ...state.rows[0], status: "cancelled_by_client" }]; return Promise.resolve({ appointment: state.rows[0] }); }
+      if (!path.endsWith('/query')) return Promise.resolve(clientAppointmentsFixture(state.rows, path, init, uid));
+      if (++reads === 1) return Promise.resolve(clientAppointmentsFixture(state.rows, path, init, uid));
       return new Promise(resolve => { oldRead = resolve; });
     });
     state.rows = [appointment("Cita original", "2026-10-16T15:00:00Z")];
     await render();
     events.dispatchEvent(new Event("focus"));
     const staleResolve = oldRead;
+    const stalePage = clientAppointmentsFixture(state.rows, `/api/businesses/${props.businessId}/appointments/query`, undefined, props.userId);
     await act(async () => button(renderer, "Cancelar cita").props.onClick());
     await act(async () => button(renderer, "Sí, cancelar cita").props.onClick());
-    await act(async () => staleResolve({ appointments: state.rows }));
+    await act(async () => staleResolve(stalePage));
     expect(cards(renderer).map(text)).toEqual([expect.stringContaining("Cancelada por ti")]);
   });
 
@@ -281,6 +285,6 @@ describe("the customer's appointments within one business", () => {
     expect(text(renderer.root)).toContain("No pudimos generar la imagen");
     expect(button(renderer, "Guardar imagen de la cita").props.disabled).toBe(false);
     expect(button(renderer, "Cancelar cita")).toBeDefined();
-    expect(apiFetch).not.toHaveBeenCalled();
+    expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
   });
 });

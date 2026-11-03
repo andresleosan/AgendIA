@@ -1,3 +1,5 @@
+import { seedPagination, paginationAppointment, paginationBusiness, paginationActor, paginationNow } from './client-appointments-pagination-storage-contract';
+import { readClientAppointmentsPage, readClientAppointment } from '@/lib/server/client-appointments-pagination';
 import { seedFactualFaqScenario, factualFaqNow, syntheticFaqItems } from './business-factual-faq-contract';
 import { saveOwnerFactualFaq } from '@/lib/server/business-factual-faq';
 import { describe, expect, it } from 'vitest';
@@ -47,6 +49,25 @@ function snapshot() {
 }
 
 describe('Firestore migration artifacts', () => {
+  it('restores cursor anchors and own appointments into D1 without any pagination state documents', async () => {
+    const memory = memoryFirestore();
+    await seedPagination(memory.db, Array.from({ length: 25 }, (_, i) => paginationAppointment(`demo-page-${String(i).padStart(3, '0')}`)));
+    const first = await readClientAppointmentsPage(paginationActor, paginationBusiness, { version: 1, view: 'upcoming' }, memory.db, paginationNow);
+    const source = { ...snapshot(), documents: [...memory.rows].map(([path, row]) => rawDocument(path, Object.fromEntries(Object.entries(row.data).map(([key, value]) => [key, encodeFirestoreValue(value)])))) };
+    const bundle = prepareMigration(source, { updatedAt: paginationNow });
+    const runtime = await createDataTestRuntime();
+    try {
+      await runtime.db.exec(buildImportSql(bundle));
+      const restored = createCloudflareDatabase(async command => {
+        const response = await runtime.fetch(command), result = await response.json() as DataReadResult | DataCommitResult;
+        if (!response.ok) throw new StorageError(response.status, 'DATA_UNAVAILABLE'); return result;
+      });
+      const page = await readClientAppointmentsPage(paginationActor, paginationBusiness, { version: 1, view: 'upcoming', cursor: first.nextCursor! }, restored, paginationNow);
+      expect(page.rows.map(row => row.id)).toEqual(['demo-page-020', 'demo-page-021', 'demo-page-022', 'demo-page-023', 'demo-page-024']);
+      expect(await readClientAppointment(paginationActor, paginationBusiness, 'demo-page-024', restored)).toEqual(paginationAppointment('demo-page-024'));
+      expect(bundle.rows).toHaveLength(26);
+    } finally { await runtime.dispose(); }
+  }, 60000);
   it('restores quota attempts receipts reviews and original periods into empty D1 without reauthorizing dispatch', async () => {
     const { vi } = await import('vitest');
     const clock = vi.spyOn(Date, 'now').mockReturnValue(quotaStorageNow); vi.stubEnv('SUPERADMIN_UID', 'demo-admin');

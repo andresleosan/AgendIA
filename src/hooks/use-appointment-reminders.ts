@@ -28,7 +28,7 @@ function validResponse(value: AppointmentReminders, businessId: string, userId: 
     && (preference.status === 'active' || value.reminders.length === 0));
 }
 
-type Context = { now: number; currentOccurrences: ReminderOccurrence[] | null; actionsLocked: boolean };
+type Context = { now: number; currentOccurrences: ReminderOccurrence[] | null; actionsLocked: boolean; partial?: boolean; knownAppointmentIds?: string[] };
 export function useAppointmentReminders(businessId: string, userId: string, context: Context) {
   const key = JSON.stringify([businessId, userId]), identity = useRef({ key });
   if (identity.current.key !== key) identity.current = { key };
@@ -49,7 +49,7 @@ export function useAppointmentReminders(businessId: string, userId: string, cont
     const value = latest.current;
     return value.data ? value.data.serverNow + Math.max(0, conditions.current.now - value.receivedAt, Date.now() - value.receivedAt) : Date.now();
   }
-  function canonical(occurrence: ReminderOccurrence) { return conditions.current.currentOccurrences?.some(item => sameReminderOccurrence(item, occurrence)) === true; }
+  function canonical(occurrence: ReminderOccurrence) { const knowledge = conditions.current; return knowledge.partial && !knowledge.knownAppointmentIds?.includes(occurrence.appointmentId) || knowledge.currentOccurrences?.some(item => sameReminderOccurrence(item, occurrence)) === true; }
   function eligible(occurrence: ReminderOccurrence) {
     const value = latest.current, time = clock();
     return Boolean(live() && !value.loading && !value.readError && !value.reconciling && !value.hideReminders && value.data?.preference.status === 'active'
@@ -124,7 +124,7 @@ export function useAppointmentReminders(businessId: string, userId: string, cont
   }
   const time = state.data ? state.data.serverNow + Math.max(0, context.now - state.receivedAt, Date.now() - state.receivedAt) : context.now;
   const reminders = !state.loading && !state.readError && !state.hideReminders && !state.reconciling && state.data?.preference.status === 'active'
-    ? state.data.reminders.filter(item => item.sourceStartAt > time && item.availableAt <= time && context.currentOccurrences?.some(candidate => sameReminderOccurrence(candidate, item))) : [];
+    ? state.data.reminders.filter(item => item.sourceStartAt > time && item.availableAt <= time && canonical(item)) : [];
   const nextExpiry = reminders.length ? Math.min(...reminders.map(item => item.sourceStartAt)) : null;
   useEffect(() => {
     if (nextExpiry === null) return;

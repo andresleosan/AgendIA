@@ -1,3 +1,5 @@
+vi.mock('@/components/auth-provider', () => ({ useAuth: () => ({ authEpoch: 1, isCurrentSession: () => true }) }));
+import { clientAppointmentsFixture } from './client-appointments-page-fixtures';
 import { act, createElement, StrictMode } from 'react';
 import { create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -6,7 +8,7 @@ import { apiFetch } from '@/lib/client/api';
 import type { Appointment, TenantService } from '@/types/firestore';
 
 const state = vi.hoisted(() => ({ rows: [] as Appointment[], readMode: 'ready', resolveRead: null as null | ((value: unknown) => void), resolveMutation: null as null | ((value: unknown) => void), image: vi.fn() }));
-vi.mock('@/lib/client/api', () => ({ apiFetch: vi.fn(), errorMessage: (error: Error) => error.message }));
+vi.mock('@/lib/client/api', async original => ({ ...await original<typeof import('@/lib/client/api')>(), apiFetch: vi.fn() }));
 vi.mock('@/lib/client/appointment-image', () => ({ createAppointmentImage: state.image }));
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -38,12 +40,13 @@ describe('rebooking from the own appointment history', () => {
     state.rows = [appointment()]; state.readMode = 'ready'; state.resolveRead = null; state.resolveMutation = null;
     state.image.mockReset().mockResolvedValue(new Blob(['synthetic'], { type: 'image/png' }));
     events = new EventTarget(); vi.stubGlobal('window', events);
-    vi.mocked(apiFetch).mockReset().mockImplementation((_path, init, uid) => {
-      if (_path.endsWith('/reminders')) return Promise.resolve({ businessId: _path.split('/')[3], ownerUid: uid, serverNow: now, preference: { enabled: false, revision: 0, status: 'disabled', offsetMinutes: 1440 }, reminders: [] });
-      if (init?.method) return new Promise(resolve => { state.resolveMutation = resolve; });
+    vi.mocked(apiFetch).mockReset().mockImplementation((path, init, uid) => {
+      if (path.endsWith('/reminders')) return Promise.resolve({ businessId: path.split('/')[3], ownerUid: uid, serverNow: now, preference: { enabled: false, revision: 0, status: 'disabled', offsetMinutes: 1440 }, reminders: [] });
+      if (!path.endsWith('/query') && !init?.method) return Promise.resolve(clientAppointmentsFixture(state.rows, path, init, uid));
+      if (init?.method && !path.endsWith('/query')) return new Promise(resolve => { state.resolveMutation = resolve; });
       if (state.readMode === 'error') return Promise.reject(new Error('Lectura sintética no disponible'));
       if (state.readMode === 'deferred') return new Promise(resolve => { state.resolveRead = resolve; });
-      return Promise.resolve({ appointments: state.rows });
+      return Promise.resolve(clientAppointmentsFixture(state.rows, path, init, uid));
     });
   });
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -57,7 +60,7 @@ describe('rebooking from the own appointment history', () => {
     expect(action.props.disabled).toBe(false);
     await act(async () => action.props.onClick({ type: 'click' }));
     expect(onRebook.mock.calls).toEqual([['haircut']]);
-    expect(apiFetch).not.toHaveBeenCalled();
+    expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
   });
 
   it('offers only valid own historical appointments whose service still exists', async () => {
@@ -69,7 +72,7 @@ describe('rebooking from the own appointment history', () => {
     expect(rebookButtons()).toHaveLength(5);
     for (const action of rebookButtons()) await act(async () => action.props.onClick());
     expect(onRebook.mock.calls).toEqual([['haircut'], ['haircut'], ['haircut'], ['haircut'], ['haircut']]);
-    expect(apiFetch).not.toHaveBeenCalled();
+    expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
   });
 
   it.each([{ onRebook: undefined }, { services: undefined }, { services: [] }, { services: [{ ...service, id: 'other-service' }] }])('omits the action when callback or current service is absent: %j', async overrides => {
@@ -81,7 +84,7 @@ describe('rebooking from the own appointment history', () => {
     expect(rebookButtons()).toHaveLength(1);
     expect(rebookButtons()[0].props.disabled).toBe(true);
     await act(async () => rebookButtons()[0].props.onClick());
-    expect(onRebook).not.toHaveBeenCalled(); expect(apiFetch).not.toHaveBeenCalled();
+    expect(onRebook).not.toHaveBeenCalled(); expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
   });
 
   it('limits rebooking to History even when a historical visit is visible in Calendar', async () => {
@@ -97,7 +100,7 @@ describe('rebooking from the own appointment history', () => {
   it.each(['unmount', 'remount'])('keeps current StrictMode actions usable and invalidates retained actions after %s', async change => {
     const workspace = (version: number) => createElement(StrictMode, null, createElement(ClientAppointments, { ...props, key: version }));
     await act(async () => { renderer = create(workspace(0)); });
-    expect(vi.mocked(apiFetch).mock.calls.filter(([path]) => path.endsWith('/appointments?view=mine'))).toHaveLength(2);
+    expect(vi.mocked(apiFetch).mock.calls.filter(([path]) => path.endsWith('/appointments/query'))).toHaveLength(2);
     await history();
     const staleClick = rebookButtons()[0].props.onClick;
     await act(async () => staleClick());
@@ -115,7 +118,7 @@ describe('rebooking from the own appointment history', () => {
     vi.mocked(apiFetch).mockClear();
     await act(async () => staleClick());
     expect(onRebook).not.toHaveBeenCalled();
-    expect(apiFetch).not.toHaveBeenCalled();
+    expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
   });
 
   it.each(['permission', 'catalog', 'callback', 'view', 'user', 'business', 'unmount'])('rejects a retained handler after its current context changes: %s', async change => {
@@ -130,7 +133,7 @@ describe('rebooking from the own appointment history', () => {
     if (change === 'unmount') { await act(async () => renderer!.unmount()); renderer = undefined; }
     vi.mocked(apiFetch).mockClear();
     await act(async () => staleClick());
-    expect(onRebook).not.toHaveBeenCalled(); expect(apiFetch).not.toHaveBeenCalled();
+    expect(onRebook).not.toHaveBeenCalled(); expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
   });
 
   it.each(['removed', 'changed-service', 'no-longer-history'])('revalidates the current appointment before invoking an old handler: %s', async change => {
@@ -140,17 +143,17 @@ describe('rebooking from the own appointment history', () => {
     await act(async () => events.dispatchEvent(new Event('focus')));
     vi.mocked(apiFetch).mockClear();
     await act(async () => staleClick());
-    expect(onRebook).not.toHaveBeenCalled(); expect(apiFetch).not.toHaveBeenCalled();
+    expect(onRebook).not.toHaveBeenCalled(); expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
   });
 
   it('blocks retained actions on read failure and while retrying the appointment read', async () => {
     await mount(); await history(); const staleClick = rebookButtons()[0]?.props.onClick; expect(staleClick).toBeTypeOf('function');
     state.readMode = 'error'; await act(async () => events.dispatchEvent(new Event('focus')));
     expect(rebookButtons()[0].props.disabled).toBe(true);
-    vi.mocked(apiFetch).mockClear(); await act(async () => staleClick()); expect(onRebook).not.toHaveBeenCalled(); expect(apiFetch).not.toHaveBeenCalled();
+    vi.mocked(apiFetch).mockClear(); await act(async () => staleClick()); expect(onRebook).not.toHaveBeenCalled(); expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
     state.readMode = 'deferred'; await act(async () => button('Reintentar cargar citas').props.onClick());
-    expect(rebookButtons()).toHaveLength(0);
-    vi.mocked(apiFetch).mockClear(); await act(async () => staleClick()); expect(onRebook).not.toHaveBeenCalled(); expect(apiFetch).not.toHaveBeenCalled();
+    expect(rebookButtons()[0].props.disabled).toBe(true);
+    vi.mocked(apiFetch).mockClear(); await act(async () => staleClick()); expect(onRebook).not.toHaveBeenCalled(); expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
   });
 
   it.each(['cancel', 'export'])('blocks rebooking while an existing appointment action is pending: %s', async operation => {
@@ -164,7 +167,7 @@ describe('rebooking from the own appointment history', () => {
     else await act(async () => { pendingAction = button('Guardar imagen de la cita').props.onClick(); });
     await history(); expect(rebookButtons()[0].props.disabled).toBe(true);
     vi.mocked(apiFetch).mockClear(); await act(async () => { rebookButtons()[0].props.onClick(); staleClick(); });
-    expect(onRebook).not.toHaveBeenCalled(); expect(apiFetch).not.toHaveBeenCalled();
+    expect(onRebook).not.toHaveBeenCalled(); expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
     await update({ userId: 'demo-other-client' });
     await act(async () => { if (operation === 'cancel') state.resolveMutation!({ appointment: { ...state.rows[1], status: 'cancelled_by_client' } }); else finishImage(new Blob(['synthetic'], { type: 'image/png' })); await pendingAction; });
   });

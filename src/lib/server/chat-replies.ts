@@ -19,7 +19,14 @@ export function renderChatReply({ intent, business, data }: { intent: ChatIntent
       break;
     }
     case 'booking': reply = data.proposal ? 'Preparé esta propuesta. Revisa el resumen y tus datos antes de pulsar Confirmar cita.' : 'Para preparar tu reserva necesito servicio, profesional, fecha y hora. La cita se agenda al revisar el resumen y pulsar Confirmar cita.'; break;
-    case 'own_appointments': case 'owner_agenda': {
+    case 'own_appointments': {
+      const appointments = data.appointments as Appointment[] | undefined;
+      const time = new Intl.DateTimeFormat('es-CO', { timeZone: 'America/Bogota', hour:'2-digit', minute:'2-digit', hourCycle:'h23' });
+      reply = appointments?.length ? 'Tus próximas citas (Colombia):\n' + appointments.slice(0,20).map(item => `${item.serviceName} · ${new Intl.DateTimeFormat('es-CO',{timeZone:'America/Bogota',day:'numeric',month:'long',year:'numeric'}).format(item.startAt)} ${time.format(item.startAt)}–${time.format(item.endAt)} · ${appointmentStatusLabel(item.status)}`).join('\n') : 'No tienes próximas citas. Puedes consultar tu historial en Mis citas.';
+      if (data.moreAppointments) reply += '\nHay más citas. Abre Mis citas para continuar por páginas.';
+      break;
+    }
+    case 'owner_agenda': {
       const appointments = data.appointments as Appointment[] | undefined;
       reply = appointments?.length ? appointments.map(item => `${item.serviceName} · ${item.dateKey} ${item.startTimeStr}–${item.endTimeStr} · ${appointmentStatusLabel(item.status)}`).join('\n') : 'No hay citas para esta consulta. Puedes revisar próximas e historial en la agenda.';
       break;

@@ -71,16 +71,16 @@ describe('business reads without browser database access', () => {
       expect((await publicGet(new Request(`https://public.invalid?${query}`), context)).status).toBe(400);
     }
   });
-  it('returns the entire client history and future appointments filtered by UID and tenant, never other clients or blocks', async () => {
+  it('requires an explicit client upgrade without issuing the former full-array history query', async () => {
     state.rows.set('businesses/business', { id: 'business' } as Business as unknown as Record<string, unknown>);
     for (let index = 0; index < 525; index++) state.rows.set(`businesses/business/appointments/own${index}`, { id: `own${index}`, tenantId: 'business', type: 'appointment', client: { uid: 'client' }, startAt: index } as Appointment as unknown as Record<string, unknown>);
     state.rows.set('businesses/business/appointments/foreign', { tenantId: 'business', type: 'appointment', client: { uid: 'other' } });
     state.rows.set('businesses/business/appointments/block', { tenantId: 'business', type: 'manual_block', client: { uid: 'client' } });
     state.rows.set('businesses/business/appointments/wrong-tenant', { tenantId: 'other-business', type: 'appointment', client: { uid: 'client' } });
     const response = await appointmentsGet(new Request('https://public.invalid/api/businesses/business/appointments?view=mine', { headers: { Authorization: 'Bearer synthetic-client' } }), { params: Promise.resolve({ id: 'business' }) });
-    expect(response.status).toBe(200);
-    expect((await response.json()).appointments).toHaveLength(525);
-    expect(state.queries).toContainEqual({ path: 'businesses/business/appointments', filters: [['client.uid', '==', 'client']] });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: 'CLIENT_APPOINTMENTS_UPGRADE_REQUIRED' });
+    expect(state.queries).toEqual([]);
   });
   it('requires login and rejects ambiguous, duplicate or unsupported appointment query parameters', async () => {
     const context = { params: Promise.resolve({ id: 'business' }) };

@@ -1,3 +1,5 @@
+vi.mock('@/components/auth-provider', () => ({ useAuth: () => ({ authEpoch: 1, isCurrentSession: () => true }) }));
+import { clientAppointmentsFixture } from './client-appointments-page-fixtures';
 import { act, createElement, StrictMode } from 'react';
 import { create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -20,20 +22,20 @@ async function update(change: Partial<Props>) { props = { ...props, ...change };
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(now); rows = [source]; browser = new EventTarget(); vi.stubGlobal('window', browser); focus = vi.fn(); scroll = vi.fn();
   props = { businessId: 'shop', businessName: 'Negocio', userId: 'customer', now };
-  vi.mocked(apiFetch).mockReset().mockImplementation(async path => path.endsWith('/reminders') ? response : { appointments: rows });
+  vi.mocked(apiFetch).mockReset().mockImplementation(async (path, init, uid) => path.endsWith('/reminders') ? { ...response, reminders: response.reminders.filter(reminder => rows.some(row => row.id === reminder.appointmentId && row.status === 'confirmed' && row.startAt === reminder.sourceStartAt && (row.rescheduleRevision ?? 0) === reminder.sourceRevision)) } : clientAppointmentsFixture(rows, path, init, uid));
 });
 afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 it('returns from history to the current upcoming card and focuses it without a write', async () => {
   await mount(); await act(async () => button('Historial').props.onClick()); expect(renderer!.root.findAllByType('article')).toHaveLength(0); vi.mocked(apiFetch).mockClear();
-  await act(async () => button('Ver cita').props.onClick()); expect(button('Próximas').props['aria-pressed']).toBe(true); expect(focus).toHaveBeenCalled(); expect(scroll).toHaveBeenCalled(); expect(apiFetch).not.toHaveBeenCalled();
+  await act(async () => button('Ver cita').props.onClick()); expect(button('Próximas').props['aria-pressed']).toBe(true); expect(focus).toHaveBeenCalled(); expect(scroll).toHaveBeenCalled(); expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
   const card = renderer!.root.findByType('article'); expect(card.props.tabIndex).toBe(-1); expect(text(card)).toContain('Cita privada');
 });
 
 it.each(['cancel', 'reschedule', 'revision', 'corrupt-revision'])('hides a stale reminder after canonical %s without waiting for the reminders poll', async change => {
   await mount(); const retained = button('Ver cita').props.onClick;
   rows = [{ ...source, ...(change === 'cancel' ? { status: 'cancelled_by_client' as const } : change === 'reschedule' ? { startAt: source.startAt + 1000 } : { rescheduleRevision: change === 'revision' ? 2 : -1 }) }];
-  await act(async () => browser.dispatchEvent(new Event('focus'))); expect(button('Ver cita')).toBeUndefined(); vi.mocked(apiFetch).mockClear(); await act(async () => retained()); expect(focus).not.toHaveBeenCalled(); expect(apiFetch).not.toHaveBeenCalled();
+  await act(async () => browser.dispatchEvent(new Event('focus'))); expect(button('Ver cita')).toBeUndefined(); vi.mocked(apiFetch).mockClear(); await act(async () => retained()); expect(focus).not.toHaveBeenCalled(); expect(vi.mocked(apiFetch).mock.calls.filter(([path, init]) => init?.method && !path.endsWith('/query'))).toHaveLength(0);
 });
 
 it('uses the parent action mutex even when a retained reminder callback runs before React renders the lock', async () => {

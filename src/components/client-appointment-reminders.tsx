@@ -9,10 +9,10 @@ const dateFormat = new Intl.DateTimeFormat('es-CO', { timeZone: 'America/Bogota'
 const timeFormat = new Intl.DateTimeFormat('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 const actionClass = 'min-h-11 rounded text-left text-sm font-semibold text-sarin-blue underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-sarin-blue disabled:cursor-not-allowed disabled:opacity-50';
 
-export function ClientAppointmentReminders({ businessId, userId, now, currentOccurrences, actionsLocked, onViewAppointment }: {
-  businessId: string; userId: string; now: number; currentOccurrences: ReminderOccurrence[] | null; actionsLocked: boolean; onViewAppointment: (occurrence: ReminderOccurrence) => void;
+export function ClientAppointmentReminders({ businessId, userId, now, currentOccurrences, actionsLocked, onViewAppointment, partial = false, knownAppointmentIds }: {
+  partial?: boolean; knownAppointmentIds?: string[]; businessId: string; userId: string; now: number; currentOccurrences: ReminderOccurrence[] | null; actionsLocked: boolean; onViewAppointment: (occurrence: ReminderOccurrence) => void;
 }) {
-  const reminders = useAppointmentReminders(businessId, userId, { now, currentOccurrences, actionsLocked });
+  const reminders = useAppointmentReminders(businessId, userId, { now, currentOccurrences, actionsLocked, partial, knownAppointmentIds });
   const preference = reminders.preference;
   const busy = reminders.savingPreference || reminders.marking !== null || reminders.reconciling;
   const pending = reminders.reminders.filter(item => item.seenAt === null), seen = reminders.reminders.filter(item => item.seenAt !== null);
@@ -46,7 +46,7 @@ export function ClientAppointmentReminders({ businessId, userId, now, currentOcc
     {!reminders.loading && !reminders.readError && !reminders.savingPreference && !reminders.reconciling && <>
       {preference?.status === 'disabled' && <p className="text-xs text-sarin-muted">Desactivados para este negocio. Puedes activarlos cuando quieras.</p>}
       {preference?.status === 'suspended' && <p className="text-sm text-sarin-muted">Los recordatorios están en pausa. Revisa tus permisos y vuelve a activarlos si quieres recibir estos avisos dentro de SarinBot.</p>}
-      {preference?.status === 'active' && (currentOccurrences === null ? <p role="status" className="text-sm text-sarin-muted">Comprobando tus citas antes de mostrar los avisos…</p> : <>
+      {preference?.status === 'active' && (!partial && currentOccurrences === null ? <p role="status" className="text-sm text-sarin-muted">Comprobando tus citas antes de mostrar los avisos…</p> : <>
         {pending.length > 0 ? <ul aria-label="Recordatorios pendientes" className="space-y-2">{pending.map(row)}</ul> : <p className="text-sm text-sarin-muted">No tienes recordatorios pendientes. Los avisos aparecen desde 24 horas antes de cada cita.</p>}
         {seen.length > 0 && <details className="space-y-2"><summary className="min-h-11 cursor-pointer rounded py-3 text-sm font-medium text-sarin-muted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-sarin-blue">Vistos ({seen.length})</summary><ul aria-label="Recordatorios vistos" className="space-y-2">{seen.map(row)}</ul></details>}
       </>)}

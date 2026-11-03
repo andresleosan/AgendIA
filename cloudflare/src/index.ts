@@ -1,4 +1,5 @@
 import { cleanupAdminPaymentRetention } from './admin-payment-retention.ts';
+import { recoveryRestricted } from '../../shared/recovery-admission.ts';
 import { scheduleRecoveryBackup, handleRecoveryOutbound, sourceObjectsPinned } from './recovery-backup.ts';
 import { recoverWorkerResponseQuota } from './response-quota-recovery.ts';
 import { cleanupPlatformSupportRetention } from './platform-support-retention.ts';
@@ -32,6 +33,7 @@ export class SarinApp extends Container<CloudflareBindings> {
   }
 
   override async onActivityExpired(): Promise<void> {
+    if (recoveryRestricted(this.env)) { if (this.ctx.container?.running) await this.stop(); return; }
     // WhatsApp polling and retention run in Node after HTTP responses finish.
     // Keep that process alive only when one of those explicit flags is enabled.
     if (backgroundWorkEnabled(this.envVars ?? {})) {
@@ -58,6 +60,7 @@ export default {
     return forwardToSingleton(request, (name) => getContainer(env.SARIN_APP, name), { ...env });
   },
   async scheduled(_controller: ScheduledController, env: CloudflareBindings): Promise<void> {
+    if (recoveryRestricted(env)) return;
     const flags: Record<string, unknown> = { ...env };
     try { await scheduleRecoveryBackup(env); } catch { console.error({ event: 'recovery_backup_failed' }); }
     if (flags.SARIN_MAINTENANCE !== 'true') {

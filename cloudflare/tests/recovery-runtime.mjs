@@ -15,13 +15,15 @@ export async function createRecoveryTestRuntime() {
       if(new URL(request.url).pathname==='/cleanup')return Response.json(await cleanupRecoveryBackups(env,now,false));
       return handleRecoveryOutbound(new Request('http://sarin-backup.internal/execute',request),env,{className:'SarinApp',containerId:'demo-singleton'},request.headers.get('x-demo-realtime')==='true'?undefined:now);
     }};`},bundle:true,write:false,format:'esm',platform:'browser'});
-  const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script:bundle.outputFiles[0].text,compatibilityDate:'2026-10-13',d1Databases:{SARIN_RECOVERY_DB:'demo-control'},r2Buckets:{SARIN_BACKUPS:'demo-archives',SARIN_FILES:'demo-source'},bindings:{SARIN_BACKUP_ENABLED:'true',SARIN_BACKUP_CLEANUP_ENABLED:'true',SARIN_BACKUP_HMAC_KEY:'demo-'.repeat(10)}}));
+  const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script:bundle.outputFiles[0].text,compatibilityDate:'2026-10-13',d1Databases:{SARIN_DB:'demo-app',SARIN_RECOVERY_DB:'demo-control'},r2Buckets:{SARIN_BACKUPS:'demo-archives',SARIN_FILES:'demo-source'},bindings:{SARIN_WITNESS_ENABLED:'true',SARIN_RECOVERY_RESOURCE_ID:'a'.repeat(64),SARIN_BACKUP_ENABLED:'true',SARIN_BACKUP_CLEANUP_ENABLED:'true',SARIN_BACKUP_HMAC_KEY:'demo-'.repeat(10)}}));
   try{
     const db=await mf.getD1Database('SARIN_RECOVERY_DB');
     await db.exec(readFileSync(new URL('../recovery-migrations/0001_recovery_control.sql',import.meta.url),'utf8').replace(/^--.*$/gm,'').replace(/\r?\n/g,' '));
+    await db.prepare('INSERT INTO recovery_witness_start VALUES(1,?,7,0)').bind('a'.repeat(64)).run();
+    const app=await mf.getD1Database('SARIN_DB');await app.exec('CREATE TABLE app_revision(id INTEGER PRIMARY KEY,revision INTEGER); INSERT INTO app_revision VALUES(1,7);');
     const bucket=await mf.getR2Bucket('SARIN_BACKUPS');
     return {db,bucket,dispose:()=>mf.dispose(),claim:async now=>{const r=await mf.dispatchFetch('http://demo.test/claim',{headers:{'x-demo-now':String(now)}});return r.json();},call:async(work,op,value={},bytes,now=Date.now())=>{
-      const command={work,op,...value};
+      const command={work,op,...(op==='seal'?{d1Revision:7}:{}),...value};
       return mf.dispatchFetch('http://demo.test/execute',{method:'POST',headers:{'x-demo-now':String(now),'x-demo-realtime':String(now===null),...(bytes?{'x-sarin-backup-command':JSON.stringify(command)}:{})},body:bytes??JSON.stringify(command)});
     }};
   }catch(error){await mf.dispose();throw error;}

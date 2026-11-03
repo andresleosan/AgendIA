@@ -16,11 +16,14 @@ function fixture() {
   const bucket = { async put(key, bytes, options) { if (options?.onlyIf && objects.has(key)) return null; objects.set(key, new Uint8Array(bytes)); return { key }; }, async get(key) { const b = objects.get(key); return b ? { size: b.length, body: new Response(b).body, async arrayBuffer() { return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); } } : null; }, async delete(key) { objects.delete(key); } };
   const env = { SARIN_BACKUP_ENABLED: 'true', SARIN_BACKUP_CLEANUP_ENABLED: 'false', SARIN_BACKUP_HMAC_KEY: 'demo-'.repeat(10), SARIN_RECOVERY_DB: db, SARIN_BACKUPS: bucket, SARIN_FILES: bucket, SARIN_DATA_BACKEND: 'd1', SARIN_BACKUP_EXPORT_TOKEN: 'demo-token', SARIN_BACKUP_ACCOUNT_ID: 'a'.repeat(32), SARIN_BACKUP_DATABASE_ID: '00000000-0000-4000-8000-000000000001', SARIN_BACKUP_DOWNLOAD_ORIGIN: 'https://demo.r2.cloudflarestorage.com', SARIN_BACKUP_RECIPIENT: 'age1' + 'a'.repeat(58), SARIN_APP: { idFromName: () => ({ toString: () => 'demo-singleton' }) } };
   env.SARIN_FILES = { ...bucket };
+  env.SARIN_WITNESS_ENABLED = 'true'; env.SARIN_RECOVERY_RESOURCE_ID = 'a'.repeat(64);
+  env.SARIN_DB = { prepare() { return { async first() { return { revision: 0 }; } }; } };
+  sqlite.prepare('INSERT INTO recovery_witness_start VALUES(1,?,0,?)').run(env.SARIN_RECOVERY_RESOURCE_ID, at - 1000);
   return { env, db, sqlite, objects };
 }
 const ctx = { className: 'SarinApp', containerId: 'demo-singleton' };
 async function work(f, now = at, attempt = 0) { return claimRecoveryBackup(f.env, { backupId: crypto.randomUUID(), attempt, now }); }
-function call(f, lease, op, payload = {}, now = at) { return handleRecoveryOutbound(new Request('http://sarin-backup.internal/execute', { method: 'POST', body: JSON.stringify({ work: lease, op, ...payload }) }), f.env, ctx, now); }
+function call(f, lease, op, payload = {}, now = at) { return handleRecoveryOutbound(new Request('http://sarin-backup.internal/execute', { method: 'POST', body: JSON.stringify({ work: lease, op, ...(op === 'seal' ? { d1Revision: 0 } : {}), ...payload }) }), f.env, ctx, now); }
 
 test('concurrent_cron_one_claim and expired fence cannot consume or seal', async () => {
   const f = fixture(); try {
@@ -186,7 +189,7 @@ test('deadline is rechecked after delayed body and delayed object verification',
       const w=await work(f);await call(f,w,'consume');const a=await put(f,w,new Uint8Array([1])),b=await put(f,w,new Uint8Array([2]));
       const envelope={formatVersion:1,backupId:w.backupId,createdAt:at,sealedAt:at,status:'sealed',keyId:'a'.repeat(64),objects:[a.entry],manifest:b.entry};
       const snapshotTimes=Object.fromEntries(['d1','r2','auth','config'].map(k=>[k,{startedAt:at,recoverableAt:at,completedAt:at}]));
-      const bytes=new TextEncoder().encode(JSON.stringify({work:w,op:'seal',envelope,snapshotTimes}));
+      const bytes=new TextEncoder().encode(JSON.stringify({work:w,op:'seal',envelope,snapshotTimes,d1Revision:0}));
       const original=f.db.prepare.bind(f.db);
       if(delayAt==='objects')f.db.prepare=sql=>{const statement=original(sql);if(sql.startsWith('SELECT o.*')){const all=statement.all.bind(statement);statement.all=async()=>{await new Promise(r=>setTimeout(r,60));return all();};}return statement;};
       const body=delayAt==='body'?new ReadableStream({async start(c){await new Promise(r=>setTimeout(r,60));c.enqueue(bytes);c.close();}}):bytes;
@@ -204,7 +207,39 @@ test('database-time final fence rejects a seal queued beyond its real deadline',
     const envelope={formatVersion:1,backupId:w.backupId,createdAt:realNow,sealedAt:realNow,status:'sealed',keyId:'a'.repeat(64),objects:[a.entry],manifest:b.entry};
     const snapshotTimes=Object.fromEntries(['d1','r2','auth','config'].map(k=>[k,{startedAt:realNow,recoverableAt:realNow,completedAt:realNow}]));
     const batch=f.db.batch.bind(f.db);f.db.batch=async statements=>{await new Promise(r=>setTimeout(r,80));return batch(statements);};
-    const response=await handleRecoveryOutbound(new Request('http://sarin-backup.internal/execute',{method:'POST',body:JSON.stringify({work:w,op:'seal',envelope,snapshotTimes})}),f.env,ctx);
+    const response=await handleRecoveryOutbound(new Request('http://sarin-backup.internal/execute',{method:'POST',body:JSON.stringify({work:w,op:'seal',envelope,snapshotTimes,d1Revision:0})}),f.env,ctx);
     assert.equal(response.status,409);assert.equal(f.sqlite.prepare('SELECT count(*) AS n FROM backup_catalog').get().n,0);
   }finally{f.sqlite.close();}
+});
+
+test('a missing witness, pre-marker snapshot and an intent racing the final seal all block integral backup', async () => {
+  const f = fixture();
+  try {
+    f.env.SARIN_WITNESS_ENABLED = 'false'; await assert.rejects(work(f), /RECOVERY_WITNESS/);
+    f.env.SARIN_WITNESS_ENABLED = 'true'; const w = await work(f); await call(f, w, 'consume');
+    const a = await put(f, w, new Uint8Array([1])), b = await put(f, w, new Uint8Array([2]));
+    const envelope = { formatVersion: 1, backupId: w.backupId, createdAt: at, sealedAt: at, status: 'sealed', keyId: 'a'.repeat(64), objects: [a.entry], manifest: b.entry };
+    const snapshotTimes = Object.fromEntries(['d1', 'r2', 'auth', 'config'].map(k => [k, { startedAt: at - 2000, recoverableAt: at - 2000, completedAt: at }]));
+    assert.equal((await call(f, w, 'seal', { envelope, snapshotTimes })).status, 503);
+    snapshotTimes.d1.recoverableAt = at;
+    const original = f.db.prepare.bind(f.db);
+    f.db.prepare = sql => {
+      if (sql.startsWith('INSERT INTO backup_catalog')) f.sqlite.prepare("INSERT INTO recovery_invalidations VALUES(?,?,0,?,?,'pending',NULL)").run(crypto.randomUUID(), 'a'.repeat(64), at, '[]');
+      return original(sql);
+    };
+    assert.equal((await call(f, w, 'seal', { envelope, snapshotTimes })).status, 409);
+    assert.equal(f.sqlite.prepare('SELECT count(*) AS n FROM backup_catalog').get().n, 0);
+  } finally { f.sqlite.close(); }
+});
+
+test('daily backup admission does not load every historical intent after 10001 committed revisions', async () => {
+  const f = fixture();
+  try {
+    f.sqlite.exec('BEGIN');
+    const insert = f.sqlite.prepare("INSERT INTO recovery_invalidations VALUES(?,?,?,?,?,'complete',?)");
+    for (let i = 1; i <= 10001; i++) insert.run('demo-' + i, 'a'.repeat(64), i - 1, at, '[]', i);
+    f.sqlite.exec('COMMIT');
+    f.env.SARIN_DB = { prepare() { return { async first() { return { revision: 10001 }; } }; } };
+    assert.ok(await work(f));
+  } finally { f.sqlite.close(); }
 });

@@ -88,6 +88,7 @@ export function getAdminAuth() {
   return getAuth(getAdminApp());
 }
 export function getAdminDb(): Database {
+  if (process.env.SARIN_RECOVERY_MODE && process.env.SARIN_RECOVERY_MODE !== 'normal' && process.env.SARIN_DATA_BACKEND !== 'd1') throw new Error('La recuperación requiere evidencia independiente de D1.');
   const backend = process.env.SARIN_DATA_BACKEND || "firestore";
   if (backend === "d1") {
     if (process.env.FIRESTORE_EMULATOR_HOST || process.env.FIREBASE_AUTH_EMULATOR_HOST)

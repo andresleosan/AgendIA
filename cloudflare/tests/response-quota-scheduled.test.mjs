@@ -30,5 +30,8 @@ test('a quota recovery error is sanitized and does not block unrelated maintenan
     await worker.default.scheduled({}, { SARIN_MAINTENANCE: 'false' });
     assert.deepEqual(globalThis.calls, ['payment', 'support', 'wake']);
     assert.deepEqual(logs, [{ event: 'response_quota_recovery_failed' }]);
+    globalThis.calls = []; logs.length = 0;
+    await worker.default.scheduled({}, { SARIN_RECOVERY_MODE: 'recovery', SARIN_BACKUP_ENABLED: 'true', WHATSAPP_ENABLED: 'true', PLATFORM_WHATSAPP_RETENTION_ENABLED: 'true' });
+    assert.deepEqual(globalThis.calls, []); assert.deepEqual(logs, []);
   } finally { console.error = oldError; delete globalThis.calls; }
 });

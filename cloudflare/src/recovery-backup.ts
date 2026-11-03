@@ -1,5 +1,7 @@
 import { RECOVERY_ENDPOINT, RECOVERY_ROUTE, RECOVERY_CHUNK_BYTES, RECOVERY_SET_BYTES, RECOVERY_ATTEMPT_MS, RECOVERY_CLAIM_MS, recoveryUuid, recoveryHash, validRecoveryWork, validEnvelope, validCiphertext, recoveryBytes, recoveryDigest, signRecoveryWork, type RecoveryWork, type BackupStatus, type CiphertextObject } from '../../shared/recovery-backup.ts';
 import { SINGLETON_NAME } from './router.ts';
+import { assertBackupWitness } from './recovery-witness.ts';
+import { recoveryRestricted } from '../../shared/recovery-admission.ts';
 
 type Env = RecoveryBindings & Partial<Pick<CloudflareBindings, 'SARIN_APP' | 'SARIN_FILES' | 'SARIN_DB'>> & { SARIN_MAINTENANCE?: string; SARIN_DATA_BACKEND?: string };
 type Run = { backup_id: string; fence: number; nonce: string; attempt: number; schedule_day: string; phase: BackupStatus['phase']; started_at: number; deadline_at: number; expires_at: number; heartbeat_at: number; consumed: number; finished_at: number | null; failure_code: string | null; bytes: number; export_bookmark: string | null; export_url: string | null; export_started_at: number | null; export_completed_at: number | null };
@@ -9,7 +11,7 @@ const reply = (value: unknown, status = 200) => Response.json(value, { status, h
 function fail(code = 'DENIED'): never { throw new Error(`RECOVERY_${code}`); }
 const uuid = (v: unknown): string => recoveryUuid(v) ? v : fail('INVALID');
 const dbFor = (env: Env) => env.SARIN_RECOVERY_DB ?? fail('CONFIG');
-function enabled(env: Env): boolean { return env.SARIN_BACKUP_ENABLED === 'true' && env.SARIN_MAINTENANCE !== 'true'; }
+function enabled(env: Env): boolean { return !recoveryRestricted(env) && env.SARIN_BACKUP_ENABLED === 'true' && env.SARIN_MAINTENANCE !== 'true'; }
 function configured(env: Env): boolean {
   return enabled(env) && !!env.SARIN_RECOVERY_DB && !!env.SARIN_BACKUPS && env.SARIN_BACKUPS !== env.SARIN_FILES && env.SARIN_RECOVERY_DB !== env.SARIN_DB && (env.SARIN_BACKUP_HMAC_KEY?.length ?? 0) >= 32;
 }
@@ -22,6 +24,7 @@ async function expire(env: Env, now: number): Promise<void> {
 }
 export async function claimRecoveryBackup(env: Env, { backupId, attempt, now, prechange = false }: { backupId: string; attempt: number; now: number; prechange?: boolean }): Promise<RecoveryWork | null> {
   if (!configured(env)) return null;
+  await assertBackupWitness(env);
   uuid(backupId); if (!Number.isSafeInteger(now) || now < 0 || !Number.isInteger(attempt) || attempt < 0 || attempt > 2) fail('INVALID');
   await expire(env, now);
   const db = dbFor(env), day = prechange ? `prechange:${backupId}` : new Date(now).toISOString().slice(0, 10), nonce = crypto.randomUUID();
@@ -146,18 +149,24 @@ async function seal(env: Env, w: RecoveryWork, body: Record<string, unknown>, cl
   const times = body.snapshotTimes as Record<string, { startedAt: number; recoverableAt: number; completedAt: number }>;
   if (!times || Object.keys(times).sort().join() !== 'auth,config,d1,r2' || Object.values(times).some(t => !t || Object.keys(t).sort().join() !== 'completedAt,recoverableAt,startedAt' || ![t.startedAt, t.recoverableAt, t.completedAt].every(v => Number.isSafeInteger(v) && v >= 0 && v <= now) || t.startedAt > t.recoverableAt || t.recoverableAt > t.completedAt)) fail('INVALID');
   const db = dbFor(env), all = [envelope.manifest, ...envelope.objects];
+  if (!Number.isSafeInteger(body.d1Revision) || Number(body.d1Revision) < 0) fail('INVALID');
+  const coverage = await assertBackupWitness(env, Number(body.d1Revision));
+  if (coverage.startedAt > times.d1.recoverableAt) fail('WITNESS');
   await db.prepare(`UPDATE backup_runs SET phase='verifying' WHERE ${leaseWhere} AND consumed=1 AND phase='copying'`).bind(...leaseArgs(w, clock())).run();
   const { results } = await db.prepare('SELECT o.* FROM backup_objects o JOIN backup_run_objects r ON o.object_id=r.object_id WHERE r.backup_id=? ORDER BY o.object_id').bind(w.backupId).all<{ object_id: string; sha256: string; bytes: number; verified: number }>();
   if (results.length !== all.length || results.some(r => !r.verified || !all.some(o => o.id === r.object_id && o.sha256 === r.sha256 && o.bytes === r.bytes))) fail('READBACK');
   const minimum = Math.min(...Object.values(times).map(t => t.recoverableAt));
   const snapshot = JSON.stringify(Object.fromEntries(Object.entries(times).map(([k, t]) => [k, t.recoverableAt])));
   const committedAt = clock();
+  // A later intent, including an incomplete second-store commit, must stop this seal.
+  // This is a control-store fence, not an atomic transaction across the two databases.
+  const witnessFence = ` AND EXISTS(SELECT 1 FROM recovery_witness_start WHERE id=1 AND resource_id=? AND start_revision<=?) AND NOT EXISTS(SELECT 1 FROM recovery_invalidations WHERE status='pending' OR revision>?)`;
   // D1 may queue the batch after Worker time was bound. Its own clock is the last fence.
   // An explicitly supplied clock is for isolated deterministic callers, never request input.
   const finalFence = databaseClock ? leaseWhere.replaceAll('>?', ">MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER))") : leaseWhere;
   // Catalog insertion and final CAS share one transaction. A stale fence cannot publish a seal.
   await db.batch([
-    db.prepare(`INSERT INTO backup_catalog(backup_id,sealed_at,recoverable_at,envelope,snapshot_times,prechange) SELECT backup_id,?,?,?,?,prechange FROM backup_runs WHERE ${finalFence} AND consumed=1 AND phase IN ('copying','verifying')`).bind(committedAt, minimum, JSON.stringify(envelope), snapshot, ...leaseArgs(w, committedAt)),
+    db.prepare(`INSERT INTO backup_catalog(backup_id,sealed_at,recoverable_at,envelope,snapshot_times,prechange) SELECT backup_id,?,?,?,?,prechange FROM backup_runs WHERE ${finalFence} AND consumed=1 AND phase IN ('copying','verifying')${witnessFence}`).bind(committedAt, minimum, JSON.stringify(envelope), snapshot, ...leaseArgs(w, committedAt), coverage.resourceId, Number(body.d1Revision), coverage.toRevision),
     db.prepare(`UPDATE backup_runs SET phase='sealed',active=0,finished_at=? WHERE ${leaseWhere} AND EXISTS(SELECT 1 FROM backup_catalog WHERE backup_id=?)`).bind(committedAt, ...leaseArgs(w, committedAt), w.backupId),
     db.prepare('UPDATE backup_objects SET refcount=(SELECT count(*) FROM backup_run_objects r JOIN backup_catalog c ON r.backup_id=c.backup_id WHERE r.object_id=backup_objects.object_id)'),
   ]);
@@ -183,7 +192,7 @@ export async function handleRecoveryOutbound(request: Request, env: Env, ctx: { 
       return reply({ ...await recoveryStatus(env, clock()), phase: r.phase });
     }
     const run = await liveRun(env, w, clock());
-    const fields: Record<string, string[]> = { consume: [], heartbeat: [], fail: ['code'], 'export-start': [], 'export-poll': [], 'export-download': [], 'r2-read': ['reference'], 'archive-put': ['entry'], 'archive-get': ['id'], seal: ['envelope', 'snapshotTimes'] };
+    const fields: Record<string, string[]> = { consume: [], heartbeat: [], fail: ['code'], 'export-start': [], 'export-poll': [], 'export-download': [], 'r2-read': ['reference'], 'archive-put': ['entry'], 'archive-get': ['id'], seal: ['envelope', 'snapshotTimes', 'd1Revision'] };
     if (!fields[op] || Object.keys(body).some(k => !['work', 'op', ...fields[op]].includes(k)) || header && op !== 'archive-put') fail('INVALID');
     if (op === 'consume') {
       const r = await dbFor(env).prepare(`UPDATE backup_runs SET consumed=1 WHERE ${leaseWhere} AND consumed=0`).bind(...leaseArgs(w, clock())).run();

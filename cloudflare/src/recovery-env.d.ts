@@ -1,5 +1,11 @@
 // Optional until an explicitly approved operational activation; absent bindings disable work.
 interface RecoveryBindings {
+  SARIN_WITNESS_ENABLED?: string;
+  SARIN_RECOVERY_MODE?: string;
+  SARIN_RECOVERY_RESOURCE_ID?: string;
+  SARIN_RECOVERY_CANDIDATE_SHA?: string;
+  SARIN_RECOVERY_MANIFEST_SHA?: string;
+  SARIN_RECOVERY_RECONCILIATION_SHA?: string;
   SARIN_RECOVERY_DB?: D1Database;
   SARIN_BACKUPS?: R2Bucket;
   SARIN_BACKUP_ENABLED?: string;

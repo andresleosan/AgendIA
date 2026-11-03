@@ -4,6 +4,7 @@ import type { DataCommand, DataCommitResult, DataFilter, DataRead, DataReadResul
 import { isDataJson, isDataPath } from '../../../shared/data-protocol';
 import type { CollectionReference, Database, DocumentReference, DocumentSnapshot, Query, QueryDocumentSnapshot, QuerySnapshot, Transaction } from './types';
 import { HttpError } from '@/lib/server/http';
+import { recoveryRestricted } from '../../../shared/recovery-admission';
 
 export class StorageError extends HttpError {
   constructor(status: number, code: string) {
@@ -117,6 +118,7 @@ export function createCloudflareDatabase(transport: DataTransport = privateTrans
   const database: Database = {
     collection(name) { return new Collection({ kind: 'query', path: assertSegment(name), filters: [], order: [] }); },
     async runTransaction<T>(handler: (transaction: Transaction) => Promise<T>, options?: { maxAttempts?: number }): Promise<T> {
+      if (recoveryRestricted({ SARIN_RECOVERY_MODE: process.env.SARIN_RECOVERY_MODE })) throw new StorageError(503, 'DATA_RECOVERY_CLOSED');
       const maxAttempts = options?.maxAttempts ?? 10;
       if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 10) throw invalid();
       for (let attempt = 0; attempt < maxAttempts; attempt++) {

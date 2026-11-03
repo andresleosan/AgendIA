@@ -1,4 +1,28 @@
 -- Apply only to the separate recovery control database, never SARIN_DB.
+-- Provision the start marker only after an approved drained-writer cutover; no invented history.
+CREATE TABLE recovery_witness_start (
+  id INTEGER PRIMARY KEY CHECK(id=1), resource_id TEXT NOT NULL,
+  start_revision INTEGER NOT NULL CHECK(start_revision>=0), started_at INTEGER NOT NULL
+);
+CREATE TRIGGER recovery_start_update BEFORE UPDATE ON recovery_witness_start
+BEGIN SELECT RAISE(ABORT,'Immutable witness start'); END;
+CREATE TRIGGER recovery_start_delete BEFORE DELETE ON recovery_witness_start
+BEGIN SELECT RAISE(ABORT,'Immutable witness start'); END;
+CREATE TABLE recovery_invalidations (
+  request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, covered_revision INTEGER NOT NULL,
+  created_at INTEGER NOT NULL, scopes TEXT NOT NULL CHECK(json_valid(scopes)),
+  status TEXT NOT NULL CHECK(status IN ('pending','complete')), revision INTEGER,
+  CHECK((status='pending' AND revision IS NULL) OR (status='complete' AND revision=covered_revision+1))
+);
+CREATE INDEX recovery_witness_revision ON recovery_invalidations(revision);
+CREATE TRIGGER recovery_witness_update BEFORE UPDATE ON recovery_invalidations
+WHEN NEW.request_id!=OLD.request_id OR NEW.fingerprint!=OLD.fingerprint OR NEW.covered_revision!=OLD.covered_revision
+  OR NEW.created_at!=OLD.created_at OR NEW.scopes!=OLD.scopes OR (OLD.status='complete' AND (NEW.status!='complete' OR NEW.revision!=OLD.revision))
+BEGIN SELECT RAISE(ABORT,'Immutable witness intent'); END;
+-- No TTL: all intents outlive every retained snapshot, including pending and false positives.
+CREATE TRIGGER recovery_witness_delete BEFORE DELETE ON recovery_invalidations
+BEGIN SELECT RAISE(ABORT,'Retained recovery witness'); END;
+CREATE TABLE recovery_admission (resource_id TEXT PRIMARY KEY, approval TEXT NOT NULL CHECK(json_valid(approval)));
 CREATE TABLE backup_runs (
   fence INTEGER PRIMARY KEY AUTOINCREMENT,
   backup_id TEXT NOT NULL UNIQUE,

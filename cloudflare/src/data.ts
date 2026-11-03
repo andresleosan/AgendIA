@@ -4,6 +4,8 @@ import { quotaTurnSchema, quotaReceiptSchema, quotaReviewSchema, quotaProtocolSc
 import type { DataCommand, DataRead, DataReadResult, DataCommitResult, DataRecord } from '../../shared/data-protocol.ts';
 import { isDataJson, isDataPath } from '../../shared/data-protocol.ts';
 import { SINGLETON_NAME } from './router.ts';
+import { prepareRecoveryWitness, completeRecoveryWitness, recoveryAdmissionAllowed } from './recovery-witness.ts';
+import { recoveryRestricted } from '../../shared/recovery-admission.ts';
 
 const MAX_BODY = 8 * 1024 * 1024;
 const MAX_DOCUMENT = 1024 * 1024;
@@ -17,7 +19,7 @@ const fields: Record<string, 'string' | 'number' | 'boolean'> = {
   'request.dateKey': 'string', 'request.createdAt': 'number', 'request.id': 'string', waitlistRecordId: 'string',
   __name__: 'string',
 };
-type DataEnvironment = Pick<CloudflareBindings, 'SARIN_DB' | 'SARIN_FILES'>;
+type DataEnvironment = Pick<CloudflareBindings, 'SARIN_DB' | 'SARIN_FILES'> & RecoveryBindings;
 type BlobReference = { key: string; contentType: string; byteLength: number; sha256: string };
 type StoredDocument = { path: string; data: string; blob: string | null };
 
@@ -206,7 +208,10 @@ async function journal(command: Extract<DataCommand, { action: 'commit' }>, fing
 async function commitCommand(command: Extract<DataCommand, { action: 'commit' }>, env: DataEnvironment): Promise<DataCommitResult> {
   const fingerprint = await digest(encoder.encode(stable(command)));
   const replay = await journal(command, fingerprint, env);
-  if (replay) return replay;
+  if (replay) {
+    await completeRecoveryWitness(await prepareRecoveryWitness(command, env), replay, env);
+    return replay;
+  }
   // Read prior values for deep merge; the following CAS aborts if anything changed.
   const paths = [...new Set([...command.writes.map(write => write.path), ...(command.writes.some(write => write.path.startsWith('responseQuota')) ? ['serverSettings/responseQuotaProtocol'] : [])])];
   const previous = await env.SARIN_DB.batch([...paths.map(path => env.SARIN_DB.prepare('SELECT path,data,blob FROM app_documents WHERE path=?').bind(path)), env.SARIN_DB.prepare('SELECT revision FROM app_revision WHERE id=1')]);
@@ -268,16 +273,19 @@ async function commitCommand(command: Extract<DataCommand, { action: 'commit' }>
     statements.push(env.SARIN_DB.prepare(write.op === 'create' ? sql : `${sql} ON CONFLICT(path) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at,blob=excluded.blob`)
       .bind(write.path, pieces.slice(0, -1).join('/'), pieces.at(-1)!, JSON.stringify(data), Date.now(), blob));
   }
+  const intent = await prepareRecoveryWitness(command, env);
   try { await env.SARIN_DB.batch(statements); }
   catch (error) {
     const completed = await journal(command, fingerprint, env);
-    if (completed) return completed;
+    if (completed) { await completeRecoveryWitness(intent, completed, env); return completed; }
     const detail = error instanceof Error ? error.message : '';
     if (detail.includes('SARIN_REVISION_CONFLICT')) throw new DataError(409, 'DATA_CONFLICT');
     if (detail.includes('UNIQUE constraint failed: app_documents.path')) throw new DataError(409, 'DATA_EXISTS');
     throw unavailable();
   }
-  return { revision: command.expectedRevision + 1 };
+  const result = { revision: command.expectedRevision + 1 };
+  await completeRecoveryWitness(intent, result, env);
+  return result;
 }
 
 export async function executeDataCommand(command: unknown, env: DataEnvironment): Promise<DataReadResult | DataCommitResult> {
@@ -285,6 +293,7 @@ export async function executeDataCommand(command: unknown, env: DataEnvironment)
   if (command.action === 'commit') for (const write of command.writes) {
     if (write.op !== 'delete' && write.path.startsWith('businessLogos/') && await digest(logo(write.data.logoDataUrl).bytes) !== write.data.sha256) throw invalid();
   }
+  if (recoveryRestricted(env) && (command.action === 'commit' || !await recoveryAdmissionAllowed(env))) throw unavailable();
   try { return command.action === 'read' ? await readCommand(command, env) : await commitCommand(command, env); }
   catch (error) { if (error instanceof DataError) throw error; throw unavailable(); }
 }

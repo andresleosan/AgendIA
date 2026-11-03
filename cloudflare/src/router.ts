@@ -1,4 +1,6 @@
 import { parseWorkloadAudience } from './identity-core.ts';
+import { recoveryRestricted } from '../../shared/recovery-admission.ts';
+import { recoveryAdmissionAllowed } from './recovery-witness.ts';
 
 export const SINGLETON_NAME = 'sarin-global-app';
 
@@ -20,6 +22,7 @@ const runtimeKeys = [
   'WEEKLY_PRICE_COP', 'FORTNIGHTLY_PRICE_COP', 'MONTHLY_PRICE_COP',
   'SARIN_DATA_BACKEND', 'SARIN_MAINTENANCE', 'SARIN_PUBLIC_BOOKING_ORIGIN', 'PILOT_AI_BUDGET_ENFORCED', 'SARIN_RESOURCE_SCHEDULE_WRITES_ENABLED', 'SARIN_WAITLIST_OFFERS_ENABLED', 'SARIN_TEAM_ACCESS_ENABLED',
   'SARIN_BACKUP_ENABLED', 'SARIN_BACKUP_HMAC_KEY', 'SARIN_BACKUP_RECIPIENT', 'SARIN_BACKUP_CONFIG_FILE', 'SARIN_BACKUP_PASSWORD_FILE', 'SARIN_BACKUP_SOURCE_SHA',
+  'SARIN_RECOVERY_MODE',
 ] as const;
 const publicKeys = ['NEXT_PUBLIC_FIREBASE_API_KEY', 'NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN', 'NEXT_PUBLIC_FIREBASE_PROJECT_ID', 'NEXT_PUBLIC_FIREBASE_APP_ID'] as const;
 const forbiddenRuntimeKeys = ['FIREBASE_AUTH_EMULATOR_HOST', 'FIRESTORE_EMULATOR_HOST', 'NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST', 'NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST', 'NEXT_PUBLIC_FIREBASE_EMULATORS'];
@@ -41,6 +44,11 @@ export function runtimeEnvironment(input: Record<string, unknown>): Record<strin
   if (input.SARIN_TEAM_ACCESS_ENABLED !== undefined && !['true', 'false'].includes(input.SARIN_TEAM_ACCESS_ENABLED as string)) throw new Error('El indicador de equipo no es válido.');
   env.SARIN_TEAM_ACCESS_ENABLED ??= 'false';
   env.SARIN_BACKUP_ENABLED ??= 'false';
+  if (input.SARIN_RECOVERY_MODE !== undefined && !['normal', 'recovery'].includes(String(input.SARIN_RECOVERY_MODE))) throw new Error('El modo de recuperación no es válido.');
+  if (recoveryRestricted(input)) {
+    for (const key of Object.keys(env)) if (key.endsWith('_ENABLED')) env[key] = 'false';
+    env.SARIN_MAINTENANCE = 'true';
+  }
   if (!['true', 'false'].includes(env.SARIN_BACKUP_ENABLED)) throw new Error('El indicador de copia no es válido.');
   env.SARIN_DATA_BACKEND ??= 'firestore';
   if (!['firestore', 'd1'].includes(env.SARIN_DATA_BACKEND)) throw new Error('El backend de datos no es válido.');
@@ -69,6 +77,7 @@ export function runtimeEnvironment(input: Record<string, unknown>): Record<strin
 }
 
 export function backgroundWorkEnabled(input: Record<string, unknown>): boolean {
+  if (recoveryRestricted(input)) return false;
   if (input.SARIN_MAINTENANCE === 'true') return false;
   return input.WHATSAPP_ENABLED === 'true' || input.WHATSAPP_RETENTION_ENABLED === 'true';
 }
@@ -127,6 +136,7 @@ async function readDrainQueue(upstream: Response): Promise<Record<string, number
 }
 
 export async function forwardToSingleton(request: Request, get: (name: string) => { fetch(request: Request): Promise<Response> }, input: Record<string, unknown> = {}): Promise<Response> {
+  if (recoveryRestricted(input) && !await recoveryAdmissionAllowed(input as RecoveryBindings)) return Response.json({ error: 'La recuperación requiere validación operativa.' }, { status: 503, headers: { 'Cache-Control': 'no-store', 'CDN-Cache-Control': 'no-store', 'Cloudflare-CDN-Cache-Control': 'no-store', 'Retry-After': '60' } });
   let publicPath: string;
   try { publicPath = decodeURIComponent(new URL(request.url).pathname).replaceAll('\\', '/'); }
   catch { return new Response(null, { status: 404 }); }
@@ -151,7 +161,7 @@ export async function forwardToSingleton(request: Request, get: (name: string) =
   }
   try {
     const requestHeaders = new Headers(request.headers);
-    for (const name of [...requestHeaders.keys()]) if (name.startsWith('x-sarin-backup-')) requestHeaders.delete(name);
+    for (const name of [...requestHeaders.keys()]) if (name.startsWith('x-sarin-backup-') || name.startsWith('x-sarin-recovery-')) requestHeaders.delete(name);
     // The SDK supports port switching through this header. It is never a public
     // capability: all traffic must reach the single Next port fixed at 3000.
     requestHeaders.delete('cf-container-target-port');

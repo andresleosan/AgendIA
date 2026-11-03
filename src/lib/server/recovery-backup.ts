@@ -7,13 +7,14 @@ import { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import { getAdminAuth } from '@/lib/firebase/admin';
 import { RECOVERY_ENDPOINT, RECOVERY_ATTEMPT_MS, RECOVERY_CHUNK_BYTES, recoveryBytes, validRecoveryWork, verifyRecoveryWork, type RecoveryWork, type BackupStatus, type CiphertextObject } from '../../../shared/recovery-backup.ts';
+import { recoveryRestricted } from '../../../shared/recovery-admission';
 
 type Environment = Record<string, string | undefined>;
 type Bridge = (op: string, value?: Record<string, unknown>, bytes?: Uint8Array) => Promise<any>;
 type Adapters = { capture: (signal: AbortSignal) => Promise<any>; encrypt: (capture: any, signal: AbortSignal) => Promise<any>; bridge: Bridge; cleanup: () => Promise<void>; now?: () => number };
 const state = globalThis as typeof globalThis & { __sarinRecoveryBackup?: boolean };
 export async function authenticateRecoveryTrigger(request: Request, env: Environment, now = Date.now()): Promise<RecoveryWork | null> {
-  if (env.SARIN_BACKUP_ENABLED !== 'true' || env.SARIN_MAINTENANCE === 'true' || !env.SARIN_BACKUP_HMAC_KEY || request.method !== 'POST') return null;
+  if (recoveryRestricted(env) || env.SARIN_BACKUP_ENABLED !== 'true' || env.SARIN_MAINTENANCE === 'true' || !env.SARIN_BACKUP_HMAC_KEY || request.method !== 'POST') return null;
   try {
     const body = JSON.parse(new TextDecoder().decode(await recoveryBytes(request.body, 2048, AbortSignal.timeout(3000))));
     if (!validRecoveryWork(body) || now >= body.deadlineAt || body.deadlineAt - now > RECOVERY_ATTEMPT_MS || !await verifyRecoveryWork(body, request.headers.get('x-sarin-backup-signature') ?? '', env.SARIN_BACKUP_HMAC_KEY)) return null;
@@ -43,7 +44,7 @@ export async function runRecoveryBackup(work: RecoveryWork, adapters: Adapters):
     if (!capture.complete || capture.blockers?.length) throw new Error('RECOVERY_CAPTURE');
     const archive = await adapters.encrypt(capture, controller.signal); check();
     sealing = true;
-    try { return await adapters.bridge('seal', { envelope: archive.envelope, snapshotTimes: capture.snapshotTimes }); }
+    try { return await adapters.bridge('seal', { envelope: archive.envelope, snapshotTimes: capture.snapshotTimes, d1Revision: archive.manifest.d1Revision }); }
     catch { return await adapters.bridge('status'); }
   } catch {
     if (sealing) return adapters.bridge('status');
@@ -62,7 +63,7 @@ export async function cleanupRecoveryDirectory(root: string): Promise<void> {
   await rm(root, { recursive: true, force: true });
 }
 export async function createRecoveryAdapters(work: RecoveryWork, env: Environment = process.env): Promise<Adapters> {
-  if (env.SARIN_BACKUP_ENABLED !== 'true' || env.SARIN_MAINTENANCE === 'true' || !/^[a-f0-9]{40}$/.test(env.SARIN_BACKUP_SOURCE_SHA ?? '') || !env.SARIN_BACKUP_CONFIG_FILE || !env.SARIN_BACKUP_RECIPIENT) throw new Error('RECOVERY_CONFIG');
+  if (recoveryRestricted(env) || env.SARIN_BACKUP_ENABLED !== 'true' || env.SARIN_MAINTENANCE === 'true' || !/^[a-f0-9]{40}$/.test(env.SARIN_BACKUP_SOURCE_SHA ?? '') || !env.SARIN_BACKUP_CONFIG_FILE || !env.SARIN_BACKUP_RECIPIENT) throw new Error('RECOVERY_CONFIG');
   const [components, age, data, format] = await Promise.all([recoveryModule('recovery-components.mjs'), recoveryModule('recovery-age.mjs'), recoveryModule('data-migration.mjs'), recoveryModule('recovery-backup.mjs')]);
   const bridge = recoveryBridge(work);
   const root = await mkdtemp(join(tmpdir(), 'sarin-recovery-'));

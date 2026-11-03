@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { initializeApp, deleteApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -50,8 +50,12 @@ it.skipIf(!enabled)('auth_restore_requires_new_login_and_grants_no_business_role
     expect((await auth.getUser(disabledUid)).disabled).toBe(true);
     const db = createCloudflareDatabase(async command => { const reply = await runtime.fetch(command); return await reply.json() as DataReadResult | DataCommitResult; });
     expect(await readOwnTeamMemberships(fresh, {}, db)).toMatchObject({ items: [], nextAfterBusinessId: null });
+    vi.stubEnv('SARIN_RECOVERY_MODE', 'recovery');
+    await expect(db.collection('businesses').doc('demo-recovery').set({ ownerUid: fresh.uid })).rejects.toMatchObject({ code: 'DATA_RECOVERY_CLOSED' });
+    vi.unstubAllEnvs();
     await auth.deleteUsers([uid, disabledUid]);
   } finally {
+    vi.unstubAllEnvs();
     await runtime.dispose(); await deleteApp(app);
     expect(dirname(resolve(directory))).toBe(resolve(tmpdir())); expect(basename(directory)).toMatch(/^sarin-recovery-auth-/);
     await rm(directory, { recursive: true, force: true });

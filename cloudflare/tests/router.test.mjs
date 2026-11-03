@@ -29,6 +29,12 @@ const workloadRuntime = {
   FIREBASE_WIF_AUDIENCE: '//iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/sarin-cloudflare/providers/worker-oidc',
   FIREBASE_WIF_SERVICE_ACCOUNT_EMAIL: 'sarin-runtime@real-project.iam.gserviceaccount.com',
 };
+test('recovery runtime disables all producers before startup and keeps witness configuration private', () => {
+  const env = runtimeEnvironment({ ...certificateRuntime, SARIN_RECOVERY_MODE: 'recovery', SARIN_BACKUP_ENABLED: 'true', WHATSAPP_ENABLED: 'true', WHATSAPP_RETENTION_ENABLED: 'true', PLATFORM_WHATSAPP_SEND_ENABLED: 'true', SARIN_WITNESS_ENABLED: 'true', SARIN_RECOVERY_RESOURCE_ID: 'a'.repeat(64) });
+  assert.equal(env.SARIN_MAINTENANCE, 'true');
+  for (const key of ['SARIN_BACKUP_ENABLED', 'WHATSAPP_ENABLED', 'WHATSAPP_RETENTION_ENABLED', 'PLATFORM_WHATSAPP_SEND_ENABLED']) assert.equal(env[key], 'false');
+  assert.equal(env.SARIN_WITNESS_ENABLED, undefined); assert.equal(env.SARIN_RECOVERY_RESOURCE_ID, undefined);
+});
 test('public internal paths stay closed and recovery headers never reach the singleton', async()=>{
   for(const path of ['/api/internal/recovery-backup','/api/%69nternal/recovery-backup','/api/internal%2frecovery-backup']){
     const response=await forwardToSingleton(new Request('https://example.test'+path,{method:'POST',headers:{'x-sarin-backup-signature':'forged'}}),()=>{throw Error('must not wake');});

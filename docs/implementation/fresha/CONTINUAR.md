@@ -44,7 +44,7 @@ El [catálogo](../../tooling/sarin-skills.md) contiene nombres reales, fuentes f
 
 ## Cierre de la sesión
 
-Al iniciar y cerrar `/avanzar` recibirás una recomendación de **modelo y esfuerzo**, con una razón breve según la [guía del proyecto](../../tooling/sarin-model-selection.md). Al cerrar se refiere a la siguiente tarea elegible; si queda pendiente, a la misma tarea que se retomará. Puedes seleccionar esa configuración antes de la próxima sesión. La sugerencia no cambia automáticamente tu modelo ni sustituye las validaciones requeridas.
+Solo al finalizar una tarea, después de verificar pruebas, commit, push y despliegue, recibirás la recomendación de **modelo y esfuerzo para la próxima tarea**, según la [guía del proyecto](../../tooling/sarin-model-selection.md). El cierre indicará que puedes abrir otra sesión y usar `/avanzar` con esa configuración. No se anuncia al inicio ni mientras la entrega siga pendiente, y no cambia automáticamente tu modelo.
 
 El propietario autorizó commit y push al terminar cada tarea validada y aclaró el 3 de noviembre de 2026 que todo debe quedar en main para desplegar a producción. Destino persistente: `origin`, repositorio `andresleosan/SarinBotSAAS`, main y su CI de despliegue habitual. No crear ramas por defecto; el PR de la rama existente debe integrarse. Esta instrucción sustituye el «sin push» y la entrega solo a rama auxiliar anteriores. Diseños y documentación también se versionan sin atribuirles funcionalidad. Sin cambios versionables no se crea un commit vacío. Capacidades, exportaciones/restauraciones reales, cobros y envíos siguen separados.
 

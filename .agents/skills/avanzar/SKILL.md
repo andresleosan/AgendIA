@@ -27,9 +27,9 @@ El verificador valida y selecciona; no ejecuta `checks[].command`. Leer esos com
 
 ## Modelo y esfuerzo por tarea
 
-El propietario pidió recomendar modelo/esfuerzo para ahorrar tokens. Aplicar la [guía de selección](../../../docs/tooling/sarin-model-selection.md) a la tarea elegida, sin volver a analizar la cola completa. Antes de investigar extensamente, indicar ID, modelo, esfuerzo y una razón breve. Es una recomendación: no cambiar configuración global ni pausar automáticamente la ejecución.
+El propietario pidió recomendar modelo/esfuerzo para ahorrar tokens, **solo al finalizar una tarea completamente validada y entregada**. No anunciar esa recomendación al iniciar `/avanzar`. Aplicar la [guía de selección](../../../docs/tooling/sarin-model-selection.md) al siguiente ID real, sin volver a analizar la cola completa ni cambiar configuración global.
 
-Al cerrar, añadir **«Próxima tarea: ID. Modelo: nombre. Esfuerzo: nivel. Motivo: una frase.»** usando el siguiente ID real del selector. Si queda trabajo pendiente, recomendar para reanudar ese mismo ID; sin tarea elegible, informar el bloqueo. Revaluar la estimación con el contrato y `resume`, sin rebajar pruebas, permisos ni evidencia de entrega. La preferencia se conserva en `preferences.modelSelection`.
+Después de comunicar tarea completada, comprobaciones, commit/push y despliegue verificados, añadir **«Ya puedes iniciar otra sesión y usar /avanzar para ID con modelo nombre y esfuerzo nivel. Motivo: una frase.»** Si queda trabajo, CI o entrega pendiente, informar el estado sin dar ese cierre ni recomendar la próxima tarea; sin tarea elegible, explicar el bloqueo. Revaluar con el contrato real, sin rebajar pruebas, permisos ni evidencia. La preferencia se conserva en `preferences.modelSelection`.
 
 ## Selección y revisión
 

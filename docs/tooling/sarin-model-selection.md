@@ -37,9 +37,9 @@ Estimación para el módulo de admisión ya desglosado; `tasks.json` sigue siend
 
 ## Qué comunicar y cuándo
 
-Al iniciar `/avanzar`, tras la selección ligera y antes de investigar extensamente, informar el ID, modelo, esfuerzo y una razón breve para esa tarea. Al cerrar, repetir el formato para el siguiente ID real del selector; si la actual queda incompleta, recomendar para retomarla. Si no hay tarea elegible, explicar el bloqueo sin inventar una siguiente tarea.
+No anunciar recomendaciones al iniciar `/avanzar`. Solo tras completar la tarea y verificar pruebas, commit/push y despliegue, informar el siguiente ID real del selector, modelo, esfuerzo y una razón breve. Si la tarea o su entrega sigue pendiente, comunicar únicamente estado y continuación, sin recomendar la próxima tarea ni decir que ya puede empezar otra. Si no hay tarea elegible, explicar el bloqueo sin inventar una siguiente tarea.
 
-Ejemplo: **«Próxima tarea: R0-POLICY-B1. Modelo: GPT-6.1-Sol. Esfuerzo: alto (high). Motivo: compatibilidad de políticas y restricciones en dos backends.»**
+Ejemplo, después del resultado y la evidencia de entrega: **«Ya puedes iniciar otra sesión y usar /avanzar para R0-POLICY-B1 con GPT-6.1-Sol y esfuerzo alto (high). Motivo: compatibilidad de políticas y restricciones en dos backends.»**
 
 La recomendación al cierre permite al propietario seleccionar modelo/esfuerzo antes de abrir la siguiente sesión. No editar `config.toml`, cambiar configuración global, abrir otra sesión ni detener automáticamente la tarea esperando una confirmación. Si el propietario pide expresamente esperar al cambio, respetarlo. No afirmar que el agente puede cambiar su propio modelo en mitad del turno.
 

@@ -4,6 +4,8 @@ import { getAdminDb } from '@/lib/firebase/admin';
 import { parseQuotaTurn, quotaReceiptId, quotaReservationSchema, QUOTA_TERMINAL, QuotaModelError, type QuotaIdentity, type QuotaStage, type QuotaEvidence, type QuotaResultRef, type ResponseQuotaReservation } from '../../../shared/response-quota-records';
 import { planResponseQuotaSettlement } from '../../../shared/response-quota-settlement';
 import { HttpError } from './http';
+import { prepareBookingDispatchRegistration } from './booking-policy-transition';
+import { assertBookingAdmission } from './booking-admission';
 
 export type { QuotaIdentity, QuotaStage, QuotaEvidence, QuotaResultRef, ResponseQuotaReservation } from '../../../shared/response-quota-records';
 const conflict = () => new HttpError(409, 'Este intento ya cambió.', 'AI_REQUEST_CONFLICT');
@@ -46,8 +48,10 @@ export async function markResponseQuotaDispatch(reservation: ResponseQuotaReserv
     if (!execution || execution.origin !== 'v2' || turn.status !== 'reserved' || execution.phase === 'interrupted') throw interrupted();
     if (execution.mayHaveDispatched) return 'already_marked';
     if (execution.phase !== 'prepared' || execution.deadlineAt <= Date.now()) throw interrupted();
+    const register = await prepareBookingDispatchRegistration(tx, db, turn.scopeId.replace(/^business_/, ''), { kind: 'quota', id: turn.reservationId });
     const next = parseStoredQuotaTurn({ ...turn, execution: { ...execution, phase: 'may_have_dispatched', mayHaveDispatched: true, providerCallId: context.providerCallId } });
     tx.set(db.collection('responseQuotaTurns').doc(turn.reservationId), next);
+    register();
     return 'dispatch_allowed';
   });
 }
@@ -63,6 +67,7 @@ export async function assertQuotaPublication(identity: QuotaIdentity, kind: 'ini
   await db.runTransaction(async tx => { await readQuotaPublication(tx, db, identity, kind); });
 }
 export async function readQuotaPublication(tx: Transaction, db: Database, identity: QuotaIdentity, kind: 'initial' | 'replay'): Promise<void> {
+  if (kind === 'initial') await assertBookingAdmission(tx, { id: identity.expectedScopeId.replace(/^business_/, '') }, 'inference', db);
   const saved = await readQuotaIdentity(tx, db, identity);
   if (!saved) throw conflict();
   const { turn } = saved;
@@ -71,7 +76,7 @@ export async function readQuotaPublication(tx: Transaction, db: Database, identi
 }
 export type QuotaEffectHooks = { prepare: (tx: Transaction, result: QuotaResultRef) => Promise<() => void> };
 export function quotaEffectHooks(identity: QuotaIdentity, db: Database): QuotaEffectHooks {
-  return { prepare: async (tx, result) => { const stage = await prepareQuotaResult(tx, db, identity, result, Date.now()); return () => applyResponseQuotaStage(tx, db, stage); } };
+  return { prepare: async (tx, result) => { await assertBookingAdmission(tx, { id: identity.expectedScopeId.replace(/^business_/, '') }, 'inference', db); const stage = await prepareQuotaResult(tx, db, identity, result, Date.now()); return () => applyResponseQuotaStage(tx, db, stage); } };
 }
 export async function finishResponseQuota(reservation: ResponseQuotaReservation, completion: boolean, db: Database, proof?: QuotaResultRef): Promise<void> {
   await db.runTransaction(async tx => {

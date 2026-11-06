@@ -23,6 +23,8 @@ import { readAppointments, readAvailability } from './bookings';
 import { chatSchema } from './schemas';
 import { createBookingProposal, recoverBookingProposal } from './booking-proposals';
 import { assertBusinessAllowsInference } from './booking-data-policy';
+import { assertBookingAdmission } from './booking-admission';
+import { withBookingDispatch } from './booking-policy-transition';
 import { readClientAppointmentsPage } from './client-appointments-pagination';
 
 interface CachedResponse { fingerprint: string; response: ChatResponse; reservation: ResponseQuotaReservation; expiresAt: number; }
@@ -107,6 +109,8 @@ export async function runSarinChat({ user, body: suppliedBody, signal, channel =
     }
   };
   const assertNewProcessing = async (tx?: Transaction, current = business!) => {
+    if (tx) await assertBookingAdmission(tx, current, 'inference', db);
+    else await db.runTransaction(transaction => assertBookingAdmission(transaction, current, 'inference', db));
     await assertBusinessAllowsInference(current.id, db, tx);
     await assertConsent(user.uid, 'account', undefined, db, tx);
     if (body.mode === 'sarin_client') await assertConsent(user.uid, 'business_client', current, db, tx);
@@ -159,7 +163,7 @@ export async function runSarinChat({ user, body: suppliedBody, signal, channel =
       if (body.stateVersion !== undefined && body.stateVersion !== state.version) throw new HttpError(409, 'La selección cambió. Reintenta para usar los datos actuales.', 'CHAT_STATE_CONFLICT');
       const interpreted = await interpretChat({ mode: body.mode, message: body.messages.at(-1)!.content, business, state, signal, requestId: body.requestId, actorUid: user.uid, beforeInference: () => assertNewProcessing(), beforeDispatch: async context => {
         if (await markResponseQuotaDispatch(quota.reservation, fingerprint, context, db) !== 'dispatch_allowed') throw new HttpError(409, 'La consulta ya se inició.', 'AI_RESPONSE_PENDING');
-      } });
+      }, dispatch: (_context, send) => withBookingDispatch({ businessId: business!.id, operation: 'inference', identity: { kind: 'quota', id: quota.reservation.reservationId }, db }, send) });
       business = await getBusiness(business.id); await assertAccess();
       await assertNewProcessing();
       const selection = interpreted.selection, data: Record<string, unknown> = { ...selection };

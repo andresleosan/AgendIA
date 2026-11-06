@@ -8,6 +8,8 @@ vi.mock('@/lib/server/response-quota', () => ({ commitResponseQuota: state.commi
 import { ingestWhatsAppWebhook, cleanupWhatsAppRetention, getWhatsAppUsage } from '@/lib/server/whatsapp-store';
 import { processWhatsAppQueue } from '@/lib/server/whatsapp-worker';
 import { decryptWhatsApp } from '@/lib/server/whatsapp-security';
+import { admissionPolicy } from './booking-admission-storage-contract';
+import { bookingDataPolicyKey } from '@/lib/server/booking-data-policy';
 const reservation = { reservationId: 'r'.repeat(64), scopeId: 'business_a', periodId: 'period-a', attemptId: 'attempt-a' };
 const documents = (rows: ReturnType<typeof memoryFirestore>['rows'], collection: string) => [...rows].filter(([path]) => path.startsWith(`${collection}/`));
 beforeEach(() => {
@@ -23,6 +25,20 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe('durable encrypted WhatsApp inbox/outbox', () => {
+  it('refuses to persist a newly generated outbox after policy withdrawal', async () => {
+    const { db, rows } = memoryFirestore({ ...whatsappRows(), [`serverSettings/${bookingDataPolicyKey('business_a')}`]: { ...admissionPolicy, businessId: 'business_a', status: 'withdrawn' } }); state.db = db;
+    await ingestWhatsAppWebhook(inbound(), db); await processWhatsAppQueue(db);
+    expect(documents(rows, 'whatsappOutbox')).toHaveLength(0); expect(fetch).not.toHaveBeenCalled();
+  });
+  it('refuses an already durable ready outbox when policy is withdrawn just before send', async () => {
+    const { db, rows } = memoryFirestore(whatsappRows()); state.db = db;
+    state.chat.mockImplementationOnce(async input => {
+      await input.onResponse({ reply: 'Synthetic pending' }, reservation);
+      await db.collection('serverSettings').doc(bookingDataPolicyKey('business_a')).set({ ...admissionPolicy, businessId: 'business_a', status: 'withdrawn' });
+    });
+    await ingestWhatsAppWebhook(inbound(), db); await processWhatsAppQueue(db);
+    expect(documents(rows, 'whatsappOutbox')[0][1].data.state).toBe('cancelled'); expect(fetch).not.toHaveBeenCalled();
+  });
   const humanEcho = () => ({ object: 'whatsapp_business_account', entry: [{ id: '200001', changes: [{ field: 'smb_message_echoes', value: { messaging_product: 'whatsapp', metadata: { phone_number_id: phoneId }, message_echoes: [{ id: 'wamid.synthetic-human', from: '573009998877', to: sender, timestamp: String(Math.floor(Date.now() / 1000)), type: 'text', text: { body: 'Synthetic human reply' } }] } }] }] });
   it('applies an app echo before an inbound turn and keeps human control without inference or send', async () => {
     const { db, rows } = memoryFirestore(whatsappRows()); state.db = db;

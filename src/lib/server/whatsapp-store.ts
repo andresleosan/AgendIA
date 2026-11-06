@@ -11,6 +11,8 @@ import { decryptWhatsApp, encryptWhatsApp, type WhatsAppCiphertext } from './wha
 import { HttpError } from './http';
 import { prepareQuotaResult, applyResponseQuotaStage, readQuotaPublication, type QuotaIdentity, type QuotaStage } from './response-quota-store';
 import { appendConversationControl, cancelSupersededWhatsAppOperations, conversationContactSchema, conversationPermitsReply, parseConversationMetadata } from './whatsapp-conversations';
+import { assertBookingAdmission } from './booking-admission';
+import { finishBookingDispatch, prepareBookingDispatchRegistration } from './booking-policy-transition';
 export { getWhatsAppConversations, setWhatsAppConversationMode, whatsAppConversationControlSchema } from './whatsapp-conversations';
 
 export const WHATSAPP_DAY = 86_400_000;
@@ -61,7 +63,7 @@ function contribution(row: WhatsAppOutbox): WhatsAppUsageCounters {
   }
   return result;
 }
-export async function updateWhatsAppOutbox(id: string, update: (previous: WhatsAppOutbox) => Partial<WhatsAppOutbox> | null, db: Firestore): Promise<void> {
+export async function updateWhatsAppOutbox(id: string, update: (previous: WhatsAppOutbox) => Partial<WhatsAppOutbox> | null, db: Firestore, transportResolved = false): Promise<void> {
   const reference = db.collection('whatsappOutbox').doc(id);
   await db.runTransaction(async transaction => {
     const snapshot = await transaction.get(reference);
@@ -81,6 +83,7 @@ export async function updateWhatsAppOutbox(id: string, update: (previous: WhatsA
       if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error('Invalid WhatsApp aggregate');
       return [name, (value as number) + after[name] - before[name]];
     }));
+    if (transportResolved) await finishBookingDispatch(transaction, db, previous.businessId, { kind: 'whatsapp', id }, 'transport_resolved');
     transaction.set(reference, next);
     transaction.set(aggregate, add(total.data()));
     transaction.set(business, add(byBusiness.data()));
@@ -212,7 +215,7 @@ export async function ingestWhatsAppWebhook(payload: unknown, db: Firestore = ge
           state: delivered ? 'delivered' : status.status === 'failed' ? 'failed' : status.status === 'sent' ? 'accepted' : previous.state,
           nextAttemptAt: WHATSAPP_TERMINAL, ...(price.success ? { pricing: price.data } : {}),
           ...(status.errors?.[0] ? { errorCode: status.errors[0].code } : {}) };
-      }, db);
+      }, db, ['sent', 'delivered', 'read', 'failed'].includes(status.status));
       if (status.status === 'delivered' || status.status === 'read') {
         await db.runTransaction(async transaction => {
           const latest = await transaction.get(numberRef);
@@ -241,7 +244,9 @@ export async function claimWhatsAppOutbox(id: string, db: Firestore): Promise<bo
       transaction.set(reference, { ...row, state: 'cancelled', nextAttemptAt: WHATSAPP_TERMINAL });
       return false;
     }
+    const register = await prepareBookingDispatchRegistration(transaction, db, row.businessId, { kind: 'whatsapp', id });
     transaction.set(reference, { ...row, state: 'sending', attempts: row.attempts + 1, nextAttemptAt: Date.now() + 60_000 });
+    register();
     return true;
   });
 }
@@ -259,6 +264,7 @@ export async function persistWhatsAppReply(id: string, leaseId: string, response
     const historyRef = db.collection('whatsappConversations').doc(inbox.conversationId);
     const historyDoc = await transaction.get(historyRef);
     if (!conversationPermitsReply(historyDoc.data(), inbox)) throw new HttpError(409, 'La atención de la conversación cambió.', 'WHATSAPP_CONTROL_CHANGED');
+    await assertBookingAdmission(transaction, { id: inbox.businessId }, 'channel_reply', db);
     const activeHistory = historyDoc.exists && Number(historyDoc.data()?.bodyExpiresAt) > Date.now() && historyDoc.data()?.content;
     const history = activeHistory ? historySchema.parse(decryptWhatsApp(historyDoc.data()!.content, historyRef.path)) : [];
     let quotaStage: QuotaStage | undefined;

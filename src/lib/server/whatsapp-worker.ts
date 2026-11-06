@@ -8,6 +8,8 @@ import { bindingReady, parseWhatsAppBinding, readWhatsAppConfig } from './whatsa
 import { decryptWhatsApp, readBoundedBytes } from './whatsapp-security';
 import { claimWhatsAppOutbox, cleanupWhatsAppRetention, inboundContentSchema, outboundContentSchema, persistWhatsAppReply, readWhatsAppHistory, updateWhatsAppOutbox, whatsappHash, WHATSAPP_TERMINAL, type WhatsAppInbox, type WhatsAppOutbox } from './whatsapp-store';
 import { conversationAllowsReply, conversationPermitsReply, markConversationForReview, registerWhatsAppOperation } from './whatsapp-conversations';
+import { withBookingDispatch } from './booking-policy-transition';
+import { HttpError } from './http';
 
 const processing = new WeakSet<Firestore>();
 const LEASE_MS = 5 * 60_000;
@@ -108,33 +110,41 @@ async function sendPending(db: Firestore) {
     try { content = outboundContentSchema.parse(decryptWhatsApp(initial.content, `whatsappOutbox/${candidate.id}`)); }
     catch { await updateWhatsAppOutbox(candidate.id, () => ({ state: 'failed', failed: true, nextAttemptAt: WHATSAPP_TERMINAL }), db); continue; }
     const operation = registerWhatsAppOperation(initial, db, 15_000);
+    let claimed = false;
     try {
-      const claimed = await claimWhatsAppOutbox(candidate.id, db);
-      if (!claimed) continue;
-      if (!await conversationAllowsReply(initial, db) || operation.signal.aborted) {
-        await updateWhatsAppOutbox(candidate.id, row => row.state === 'sending' && !row.sent ? { state: 'cancelled', nextAttemptAt: WHATSAPP_TERMINAL } : null, db); continue;
-      }
-      const config = readWhatsAppConfig();
-      const response = await fetch(`https://graph.facebook.com/${config.graphApiVersion}/${initial.phoneNumberId}/messages`, {
-        method: 'POST', headers: { Authorization: `Bearer ${config.credentials[initial.phoneNumberId].accessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: `+${content.to}`, type: 'text', text: { preview_url: false, body: content.reply },
-          context: { message_id: content.messageId }, biz_opaque_callback_data: candidate.id }),
-        redirect: 'error', cache: 'no-store', signal: operation.signal,
+      await withBookingDispatch({ businessId: initial.businessId, operation: 'channel_reply', identity: { kind: 'whatsapp', id: candidate.id }, db }, async (startTransport, resolveTransport) => {
+        claimed = await claimWhatsAppOutbox(candidate.id, db);
+        if (!claimed) return;
+        if (!await conversationAllowsReply(initial, db) || operation.signal.aborted) {
+          await updateWhatsAppOutbox(candidate.id, row => row.state === 'sending' && !row.sent ? { state: 'cancelled', nextAttemptAt: WHATSAPP_TERMINAL } : null, db); resolveTransport(); return;
+        }
+        const config = readWhatsAppConfig();
+        startTransport();
+        const response = await fetch(`https://graph.facebook.com/${config.graphApiVersion}/${initial.phoneNumberId}/messages`, {
+          method: 'POST', headers: { Authorization: `Bearer ${config.credentials[initial.phoneNumberId].accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: `+${content.to}`, type: 'text', text: { preview_url: false, body: content.reply },
+            context: { message_id: content.messageId }, biz_opaque_callback_data: candidate.id }),
+          redirect: 'error', cache: 'no-store', signal: operation.signal,
+        });
+        const result = JSON.parse((await readBoundedBytes(response.body, 16_384)).toString('utf8'));
+        const id = result?.messages?.[0]?.id;
+        if (response.ok && typeof id === 'string' && id.length > 0 && id.length <= 512) {
+          resolveTransport();
+          await updateWhatsAppOutbox(candidate.id, row => ({ state: row.delivered ? 'delivered' : 'accepted', sent: true, metaMessageId: id, nextAttemptAt: WHATSAPP_TERMINAL }), db);
+          await db.collection('whatsappMessageIds').doc(whatsappHash(initial.phoneNumberId, id)).set({ outboxId: candidate.id, expiresAt: initial.expiresAt });
+        } else if (response.status === 429 && Number.isSafeInteger(result?.error?.code)) {
+          resolveTransport();
+          // Only an explicit rejected 429 can be retried. Timeouts/5xx are ambiguous.
+          await updateWhatsAppOutbox(candidate.id, row => row.sent ? null : { state: row.attempts < 3 ? 'ready' : 'failed', failed: row.attempts >= 3, errorCode: result.error.code,
+            nextAttemptAt: row.attempts < 3 ? Date.now() + 30_000 * 2 ** row.attempts : WHATSAPP_TERMINAL }, db);
+        } else if (response.status >= 400 && response.status < 500 && Number.isSafeInteger(result?.error?.code)) {
+          resolveTransport();
+          await updateWhatsAppOutbox(candidate.id, row => row.sent ? null : { state: 'failed', failed: true, errorCode: result.error.code, nextAttemptAt: WHATSAPP_TERMINAL }, db);
+        } else throw new Error('Ambiguous send result');
       });
-      const result = JSON.parse((await readBoundedBytes(response.body, 16_384)).toString('utf8'));
-      const id = result?.messages?.[0]?.id;
-      if (response.ok && typeof id === 'string' && id.length > 0 && id.length <= 512) {
-        await updateWhatsAppOutbox(candidate.id, row => ({ state: row.delivered ? 'delivered' : 'accepted', sent: true, metaMessageId: id, nextAttemptAt: WHATSAPP_TERMINAL }), db);
-        await db.collection('whatsappMessageIds').doc(whatsappHash(initial.phoneNumberId, id)).set({ outboxId: candidate.id, expiresAt: initial.expiresAt });
-      } else if (response.status === 429 && Number.isSafeInteger(result?.error?.code)) {
-        // Only an explicit rejected 429 can be retried. Timeouts/5xx are ambiguous.
-        await updateWhatsAppOutbox(candidate.id, row => row.sent ? null : { state: row.attempts < 3 ? 'ready' : 'failed', failed: row.attempts >= 3, errorCode: result.error.code,
-          nextAttemptAt: row.attempts < 3 ? Date.now() + 30_000 * 2 ** row.attempts : WHATSAPP_TERMINAL }, db);
-      } else if (response.status >= 400 && response.status < 500 && Number.isSafeInteger(result?.error?.code)) {
-        await updateWhatsAppOutbox(candidate.id, row => row.sent ? null : { state: 'failed', failed: true, errorCode: result.error.code, nextAttemptAt: WHATSAPP_TERMINAL }, db);
-      } else throw new Error('Ambiguous send result');
-    } catch {
-      await updateWhatsAppOutbox(candidate.id, row => row.sent ? null : { state: 'unknown', nextAttemptAt: WHATSAPP_TERMINAL }, db);
+    } catch (error) {
+      if (claimed) await updateWhatsAppOutbox(candidate.id, row => row.sent ? null : { state: 'unknown', nextAttemptAt: WHATSAPP_TERMINAL }, db);
+      else if (error instanceof HttpError && error.status === 409 && error.code?.startsWith('BOOKING_')) await updateWhatsAppOutbox(candidate.id, row => row.state === 'ready' ? { state: 'cancelled', nextAttemptAt: WHATSAPP_TERMINAL } : null, db);
     } finally { operation.dispose(); }
   }
 }

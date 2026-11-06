@@ -8,6 +8,8 @@ import { reserveResponseQuota, responseQuotaIdentity, getResponseQuota } from '@
 import { markResponseQuotaDispatch, finishResponseQuota, quotaEffectHooks } from '@/lib/server/response-quota-store';
 import { createBookingProposal } from '@/lib/server/booking-proposals';
 import { saveChatState } from '@/lib/server/chat-state';
+import { admissionPolicy } from './booking-admission-storage-contract';
+import { bookingDataPolicyKey } from '@/lib/server/booking-data-policy';
 let runtime: Awaited<ReturnType<typeof createDataTestRuntime>>;
 const input = { businessId: business.id, actorUid: 'demo-client', mode: 'sarin_client' as const, channel: 'web' as const, requestId: 'demo-effects', fingerprint: 'a'.repeat(64) };
 function connect(before?: (command: DataCommand) => Promise<void>) { return createCloudflareDatabase(async command => {
@@ -23,6 +25,17 @@ async function scenario() {
   return { db, quota, identity: { ...responseQuotaIdentity(input), reservation: quota.reservation } };
 }
 const selection = { serviceId: 'demo-cut', resourceId: 'demo-chair', dateKey: '2030-01-07', startTimeStr: '10:00' };
+it('policy cut wins against publication after its reads but before the real D1 commit', async () => {
+  const { db, identity } = await scenario(); let cut = false;
+  const late = connect(async command => {
+    if (!cut && command.action === 'commit' && command.writes.some(w => w.path.startsWith('chatStates/'))) {
+      cut = true;
+      await db.collection('serverSettings').doc(bookingDataPolicyKey(business.id)).set({ ...admissionPolicy, businessId: business.id, status: 'withdrawn' });
+    }
+  });
+  await expect(saveChatState({ actorUid: input.actorUid, businessId: business.id, mode: input.mode, channel: input.channel }, 0, {}, late, now, quotaEffectHooks(identity, late))).rejects.toMatchObject({ code: 'BOOKING_DECLARATION_WITHDRAWN' });
+  expect((await db.collection('chatStates').get()).size).toBe(0);
+});
 it('closeWinsAgainstLateEffects after their reads but before the real D1 commit', async () => {
   const { db, quota, identity } = await scenario(); let closed = false;
   const late = connect(async command => {

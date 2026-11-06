@@ -78,9 +78,9 @@ function unavailableMessage(provider: EngineProvider, status?: number): string {
   return `SarinBot no puede conectar con ${name}. Inténtalo de nuevo en un momento.`;
 }
 
-async function responseJson(response: Response): Promise<unknown> {
+async function responseJson(response: Response, onResolved?: () => void): Promise<unknown> {
   const reader = response.body?.getReader();
-  if (!reader) throw new HttpError(502, 'El motor devolvió una respuesta vacía.');
+  if (!reader) { onResolved?.(); throw new HttpError(502, 'El motor devolvió una respuesta vacía.'); }
   const chunks: Uint8Array[] = []; let size = 0;
   try {
     while (true) {
@@ -90,6 +90,7 @@ async function responseJson(response: Response): Promise<unknown> {
       chunks.push(value);
     }
   } finally { reader.releaseLock(); }
+  onResolved?.();
   const all = new Uint8Array(size); let offset = 0;
   for (const chunk of chunks) { all.set(chunk, offset); offset += chunk.byteLength; }
   try { return JSON.parse(new TextDecoder().decode(all)); } catch { throw new HttpError(502, 'Respuesta no válida del motor.'); }
@@ -190,11 +191,12 @@ function chatRequest(provider: EngineProvider, model: string, messages: EngineMe
 export function serializePlatformSupportRequest(system: string, question: string): string {
   return JSON.stringify(chatRequest('deepseek', 'deepseek-flash', [{ role: 'system', content: system }, { role: 'user', content: question }]));
 }
-async function chatTransport(config: ReturnType<typeof engineConfig>, body: string, signal: AbortSignal) {
+async function chatTransport(config: ReturnType<typeof engineConfig>, body: string, signal: AbortSignal, onStart?: () => void, onResolved?: () => void) {
   signal.throwIfAborted();
+  onStart?.();
   const response = await fetch(config.url.toString(), { method: 'POST', headers: config.headers, cache: 'no-store', redirect: 'error', signal, body });
-  if (!response.ok) { await response.body?.cancel(); throw new HttpError(503, unavailableMessage(config.provider, response.status)); }
-  return responseJson(response);
+  if (!response.ok) { await response.body?.cancel(); if (response.status >= 400 && response.status < 500) onResolved?.(); throw new HttpError(503, unavailableMessage(config.provider, response.status)); }
+  return responseJson(response, onResolved);
 }
 function deepSeekUsage(raw: unknown): EngineTokenUsage | null {
   const usage = usageSchema.safeParse(raw);
@@ -223,7 +225,8 @@ export async function completePlatformSupport(capability: object, body: string, 
   } finally { observation.finishedAt = Date.now(); onUsage(observation); }
 }
 
-export async function completeChat(messages: EngineMessage[], tools?: readonly ToolDefinition[], options: { vision?: boolean; signal?: AbortSignal; provider?: EngineProvider; billingContext?: PaidCallContext; beforeDispatch?: (context: EngineDispatchContext) => Promise<void>; onUsage?: (observation: EngineUsageObservation) => void | Promise<void> } = {}): Promise<EngineAssistantMessage> {
+export type EngineDispatch = <T>(context: EngineDispatchContext, send: (onStart?: () => void, onResolved?: () => void) => Promise<T>) => Promise<T>;
+export async function completeChat(messages: EngineMessage[], tools?: readonly ToolDefinition[], options: { vision?: boolean; signal?: AbortSignal; provider?: EngineProvider; billingContext?: PaidCallContext; beforeDispatch?: (context: EngineDispatchContext) => Promise<void>; dispatch?: EngineDispatch; onUsage?: (observation: EngineUsageObservation) => void | Promise<void> } = {}): Promise<EngineAssistantMessage> {
   const config = engineConfig(options.vision, options.provider);
   if (config.provider !== 'ollama' && messages.some(message => Array.isArray(message.content) && message.content.some(part => part.type === 'image_url'))) {
     throw new HttpError(503, 'Las imágenes requieren el motor local de la Mac.');
@@ -251,16 +254,17 @@ export async function completeChat(messages: EngineMessage[], tools?: readonly T
   }
   // No provider request has been dispatched here. A denied policy check can
   // release this reservation; failures after fetch must retain normal accounting.
-  try {
-    if (options.beforeDispatch) await options.beforeDispatch({ provider: config.provider, providerCallId: observation?.callId ?? null });
-    if (options.signal?.aborted) throw new DOMException('Solicitud cancelada.', 'AbortError');
-  } catch (error) {
-    if (reservation) { try { await releaseUndispatchedPaidCallBudget(reservation); } catch { /* retain maximum on storage outage */ } }
-    throw error;
-  }
-  try {
+  let transportStarted = false;
+  const context = { provider: config.provider, providerCallId: observation?.callId ?? null };
+  const send = async (onStart?: () => void, onResolved?: () => void) => {
+    if (options.beforeDispatch) await options.beforeDispatch(context);
+    if (options.signal?.aborted) { onResolved?.(); throw new DOMException('Solicitud cancelada.', 'AbortError'); }
     const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(config.timeoutMs)]) : AbortSignal.timeout(config.timeoutMs);
-    const data = await chatTransport(config, requestBody, signal);
+    transportStarted = true;
+    return chatTransport(config, requestBody, signal, onStart, onResolved);
+  };
+  try {
+    const data = await (options.dispatch ? options.dispatch(context, send) : send());
     if (observation && data && typeof data === 'object') {
       const metadata = data as Record<string, unknown>;
       if (config.provider === 'gemini') {
@@ -288,11 +292,15 @@ export async function completeChat(messages: EngineMessage[], tools?: readonly T
     if (observation) observation.success = true;
     return assistant;
   } catch (error) {
+    if (!transportStarted) {
+      if (reservation) { try { await releaseUndispatchedPaidCallBudget(reservation); } catch { /* retain maximum on storage outage */ } }
+      throw error;
+    }
     if (options.signal?.aborted) throw new DOMException('Solicitud cancelada.', 'AbortError');
     if (error instanceof HttpError) throw error;
     throw new HttpError(503, unavailableMessage(config.provider));
   } finally {
-    if (observation) {
+    if (observation && transportStarted) {
       observation.finishedAt = Date.now();
       // Accounting never changes a model result or retries a committed tool.
       if (reservation) { try { await settlePaidCallBudget(reservation, observation); } catch { /* maximum reservation stays held; never repeat fetch */ } }

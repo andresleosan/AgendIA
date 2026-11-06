@@ -3,9 +3,38 @@ vi.mock('@/lib/firebase/admin', () => ({ getAdminDb: () => { throw new Error('De
 import { DATA_COLLECTIONS, DATA_CHILDREN } from '../shared/data-protocol';
 import { classifyBackupDocument, BACKUP_CLASSIFIED_ROOTS, BACKUP_CLASSIFIED_CHILDREN } from '../scripts/lib/recovery-backup.mjs';
 import { recoveryAppointment, recoveryNow, recoverySha } from './recovery-backup-fixtures';
+import { admissionPolicy } from './booking-admission-storage-contract';
+import { bookingDataPolicyKey } from '@/lib/server/booking-data-policy';
+import { bookingDispatchHeadKey, bookingPolicyOperationKey } from '@/lib/server/booking-admission';
 
 const classify = (path: string, data: unknown) => classifyBackupDocument(path, data, recoveryNow);
 describe('daily backup classification', () => {
+  it('preserves admission controls, validates tenant hashes and scrubs private reasons', () => {
+    const policy = { ...admissionPolicy, status: 'suspended', origin: 'admin' }, path = `serverSettings/${bookingDataPolicyKey(policy.businessId)}`;
+    const result = classify(path, policy);
+    expect(result).toMatchObject({ kind: 'control', data: { backupControl: { executable: false }, value: { status: 'suspended', reason: null } } });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_REASON');
+    expect(() => classify(`serverSettings/${bookingDataPolicyKey('demo-other')}`, policy)).toThrow('D1_BACKUP_UNCLASSIFIED');
+    const head = { version: 1, businessId: policy.businessId, revision: 1, refs: [{ kind: 'quota', id: 'demo-turn', policyRevision: 1, startedAt: 1 }] };
+    const operation = { version: 1, businessId: policy.businessId, actorUid: 'demo-owner', requestId: 'demo-request', action: 'withdraw', operationHash: 'a'.repeat(64), occurredAt: 1, previousRevision: 1, targetRevision: 2, phase: 'applied' };
+    const records: [string, unknown][] = [
+      [path, policy],
+      [`serverSettings/${bookingDispatchHeadKey(policy.businessId)}`, head],
+      [`serverSettings/${bookingPolicyOperationKey(policy.businessId, operation.actorUid, operation.requestId)}`, operation],
+      ['serverSettings/bookingAdmissionProtocol', { version: 1, minimumReader: 2, introducedBySha: recoverySha }],
+    ];
+    for (const [key, data] of records) {
+      expect(classify(key, data).kind).toMatch(/control|retain/);
+      expect(() => classify(key, { ...(data as object), unexpected: 'PRIVATE' })).toThrow('D1_BACKUP_UNCLASSIFIED');
+    }
+    expect(() => classify(`serverSettings/${bookingDispatchHeadKey('demo-other')}`, head)).toThrow('D1_BACKUP_UNCLASSIFIED');
+    expect(() => classify(`serverSettings/${bookingPolicyOperationKey(policy.businessId, 'demo-other', operation.requestId)}`, operation)).toThrow('D1_BACKUP_UNCLASSIFIED');
+    const transition = { ...admissionPolicy, status: 'transitioning', transition: { requestId: 'demo-request', targetRevision: 2, startedAt: 1, dispatchRefs: head.refs, target: { status: 'withdrawn', origin: 'owner', dataMode: 'general', representedMinorsEnabled: false, declaration: admissionPolicy.declaration, reason: 'PRIVATE_TARGET' } } };
+    const saved = classify(path, transition);
+    expect(saved.data.value.transition.target.status).toBe('withdrawn');
+    expect(saved.data.value.transition.dispatchRefs).toEqual(head.refs);
+    expect(JSON.stringify(saved)).not.toContain('PRIVATE');
+  });
   it('rejects unknown consent scopes and actions even with historical receipt IDs', async () => {
     const { consentDocuments } = await import('@/lib/server/consent');
     const documents = consentDocuments('account');

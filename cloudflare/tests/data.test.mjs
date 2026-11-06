@@ -26,6 +26,18 @@ async function fixture(context) {
 }
 const isError = code => error => error.code === code && !/private-payload/.test(error.message);
 
+test('booking admission protocol cannot delete, merge, downgrade or replace its original marker', async context => {
+  const env = await fixture(context), path = 'serverSettings/bookingAdmissionProtocol';
+  const marker = { version: 1, minimumReader: 2, introducedBySha: 'a'.repeat(40) };
+  await executeDataCommand(commit(0, [{ op: 'create', path, data: marker }]), env);
+  for (const writes of [[{ op: 'delete', path }], [set(path, { ...marker, minimumReader: 1 })], [set(path, { ...marker, introducedBySha: 'b'.repeat(40) })], [set(path, marker, true)], [set(path, { ...marker, unexpected: true })]]) {
+    await assert.rejects(executeDataCommand(commit(1, [set('serverSettings/demo-atomic', { value: 'private-payload' }), ...writes]), env), isError('DATA_INVALID'));
+    assert.equal((await executeDataCommand(read('serverSettings/demo-atomic'), env)).documents.length, 0);
+  }
+  await executeDataCommand(commit(1, [set(path, marker)]), env);
+  assert.deepEqual((await executeDataCommand(read(path), env)).documents[0].data, marker);
+});
+
 test('waitlist offers admit only private children with bounded existing typed query fields', async context => {
   const env = await fixture(context);
   const parent = 'businesses/demo-offers/waitlistOffers';

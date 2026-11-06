@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
+import { bookingPolicySchema, bookingDispatchHeadSchema, bookingPolicyOperationSchema } from '../../src/lib/booking-admission.ts';
+import { bookingAdmissionProtocolSchema } from '../../src/lib/booking-admission-release.ts';
 import { isDataJson, isDataPath } from '../../shared/data-protocol.ts';
 import { quotaProtocolSchema, quotaTurnSchema, quotaReceiptSchema, quotaReviewSchema, responsePeriodSchema, quotaReservationSchema } from '../../shared/response-quota-records.ts';
 import { isSupportRecord, isSupportRecipient } from '../../shared/platform-support-records.ts';
@@ -77,13 +80,17 @@ export const BACKUP_CLASSIFIED_ROOTS = ['platformWhatsAppSpending', 'platformSup
 export const BACKUP_CLASSIFIED_CHILDREN = { businesses: ['appointments', 'attendanceEvents', 'ownerRescheduleProposals', 'bookingLocks', 'clientPolicies', 'reminderPreferences', 'reminderReceipts', 'waitlistRequests', 'waitlistOwnerReviews', 'waitlistOfferHeads', 'waitlistOffers', 'resourceSchedulePolicies', 'resourceScheduleOperations', 'factualFaq', 'factualFaqOperations', 'teamAccessEvents'], responseQuotaScopes: ['periods'], responseQuotaTurns: ['reviews'], aiUsageMonths: ['businesses'], whatsappUsage: ['businesses'] };
 
 function serverSchema(id, data) {
+  if (id === 'bookingAdmissionProtocol') return bookingAdmissionProtocolSchema;
+  const digest = parts => createHash('sha256').update(JSON.stringify(parts)).digest('hex');
+  if (/^booking_policy_[a-f0-9]{64}$/.test(id)) return value => bookingPolicySchema.safeParse(value).success && id === `booking_policy_${digest([value.businessId])}`;
+  if (/^booking_dispatch_[a-f0-9]{64}$/.test(id)) return value => bookingDispatchHeadSchema.safeParse(value).success && id === `booking_dispatch_${digest([value.businessId])}`;
+  if (/^booking_policy_operation_[a-f0-9]{64}$/.test(id)) return value => bookingPolicyOperationSchema.safeParse(value).success && id === `booking_policy_operation_${digest([value.businessId, value.actorUid, value.requestId])}`;
   if (id === 'responseQuotaProtocol') return quotaProtocolSchema;
   if (id === 'responseQuotaRecoveryCursor') return quotaCursor;
   if (id === 'ai') return o({ provider: z.enum(['ollama', 'deepseek', 'gemini']), updatedAt: n });
   if (id === 'platform_whatsapp') return isPlatformWhatsAppConnectionRecord;
   if (id === 'platform_whatsapp_budget') return o({ version: n, ...counts('dayMicros monthMicros updatedAt'), updatedBy: s });
   if (/^platform_whatsapp_link_key_/.test(id)) return isPlatformWhatsAppLinkKeyMarker;
-  if (/^booking_policy_[a-f0-9]{64}$/.test(id)) return o({ version: v, businessId: s, dataMode: z.enum(['general', 'health']), representedMinorsEnabled: b, revision: n, updatedAt: n, updatedBy: s, reason: s });
   if (/^business_team_/.test(id)) return teamState;
   if (/^team_request_uid_/.test(id)) return o({ version: v, uid: s, requestEvents: z.array(o({ at: n, requestHash: h })) });
   if (/^(?:client_rate_|inference_(?:tenant|business)_|admin_copilot_rate_)/.test(id)) return o({ version: v, events: z.array(o({ at: n, request: h, fingerprint: h })) });
@@ -200,7 +207,7 @@ export function classifyBackupDocument(path, data, now) {
     return { kind: 'exclude', data: null, reasonCodes: ['TRANSIENT_STATE_EXCLUDED'] };
   }
   const control = reasons.has('TRANSIENT_OR_FREE_TEXT_REMOVED') || ['platformWhatsAppLinks', 'whatsappInbox', 'whatsappOutbox', 'platformWhatsAppJobs', 'platformWhatsAppOutbox', 'bookingProposals', 'invitations'].includes(root)
-    || ['ownerRescheduleProposals', 'waitlistOffers'].includes(child) || root === 'serverSettings' && /^invitation_code_/.test(id);
+    || ['ownerRescheduleProposals', 'waitlistOffers'].includes(child) || root === 'serverSettings' && /^(?:invitation_code_|booking_dispatch_|booking_policy_operation_)/.test(id);
   if (control) return { kind: 'control', data: { backupControl: { version: 1, executable: false }, value }, reasonCodes: [...reasons, 'RECOVERY_RECONCILIATION_REQUIRED'] };
   return { kind: reasons.size ? 'sanitize' : 'retain', data: value, reasonCodes: [...reasons] };
 }

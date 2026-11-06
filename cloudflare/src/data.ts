@@ -6,6 +6,7 @@ import { isDataJson, isDataPath } from '../../shared/data-protocol.ts';
 import { SINGLETON_NAME } from './router.ts';
 import { prepareRecoveryWitness, completeRecoveryWitness, recoveryAdmissionAllowed } from './recovery-witness.ts';
 import { recoveryRestricted } from '../../shared/recovery-admission.ts';
+import { bookingAdmissionProtocolSchema } from '../../src/lib/booking-admission-release.ts';
 
 const MAX_BODY = 8 * 1024 * 1024;
 const MAX_DOCUMENT = 1024 * 1024;
@@ -80,7 +81,7 @@ function validateCommand(command: unknown): asserts command is DataCommand {
   for (const write of command.writes) {
     if (!object(write)) throw invalid();
     path(write.path, true);
-    if (write.op === 'delete') { keys(write, ['op', 'path']); if (['adminPaymentActions/key_marker', 'platformSupportConversations/key_marker', 'serverSettings/responseQuotaProtocol'].includes(write.path) || write.path.startsWith('responseQuotaReceipts/') || /^responseQuotaTurns\/[^/]+\/reviews\//.test(write.path)) throw invalid(); continue; }
+    if (write.op === 'delete') { keys(write, ['op', 'path']); if (['adminPaymentActions/key_marker', 'platformSupportConversations/key_marker', 'serverSettings/responseQuotaProtocol', 'serverSettings/bookingAdmissionProtocol'].includes(write.path) || write.path.startsWith('responseQuotaReceipts/') || /^responseQuotaTurns\/[^/]+\/reviews\//.test(write.path)) throw invalid(); continue; }
     if (typeof write.op !== 'string' || !['set', 'create'].includes(write.op)) throw invalid();
     keys(write, write.op === 'set' ? ['op', 'path', 'data', 'merge'] : ['op', 'path', 'data']);
     if (!object(write.data) || !isDataJson(write.data) || (write.merge !== undefined && typeof write.merge !== 'boolean')) throw invalid();
@@ -89,6 +90,7 @@ function validateCommand(command: unknown): asserts command is DataCommand {
     if (/^responseQuotaTurns\/[^/]+\/reviews\//.test(write.path) && (write.op !== 'create' || !quotaReviewSchema.safeParse(write.data).success)) throw invalid();
     if (/^responseQuotaTurns\/[^/]+$/.test(write.path) && write.data.execution !== undefined && (write.merge || !quotaTurnSchema.safeParse(write.data).success || write.data.reservationId !== write.path.split('/')[1])) throw invalid();
     if (write.path === 'serverSettings/responseQuotaProtocol' && (write.merge || !quotaProtocolSchema.safeParse(write.data).success)) throw invalid();
+    if (write.path === 'serverSettings/bookingAdmissionProtocol' && (write.merge || !bookingAdmissionProtocolSchema.safeParse(write.data).success)) throw invalid();
     if (/^payment(?:Images|Receipts)\//.test(write.path) && Object.hasOwn(write.data, 'receiptDataUrl')) receipt(write.data.receiptDataUrl);
     if (write.path.startsWith('businessLogos/')) {
       if (typeof write.data.businessId !== 'string' || !/^[A-Za-z0-9_-]{1,60}$/.test(write.data.businessId) || typeof write.data.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(write.data.sha256) || write.path !== `businessLogos/${write.data.businessId}_${write.data.sha256}` || typeof write.data.ownerUid !== 'string' || !write.data.ownerUid || write.data.ownerUid.length > 256 || !Number.isSafeInteger(write.data.createdAt) || Number(write.data.createdAt) < 0) throw invalid();
@@ -244,6 +246,7 @@ async function commitCommand(command: Extract<DataCommand, { action: 'commit' }>
       }
     }
     if (write.path === 'serverSettings/responseQuotaProtocol' && write.op !== 'delete' && state.has(write.path) && stable(state.get(write.path)!.data) !== stable(write.data)) throw invalid();
+    if (write.path === 'serverSettings/bookingAdmissionProtocol' && write.op !== 'delete' && state.has(write.path) && stable(state.get(write.path)!.data) !== stable(write.data)) throw invalid();
     if (write.op === 'delete') {
       state.delete(write.path);
       statements.push(env.SARIN_DB.prepare('DELETE FROM app_documents WHERE path=?').bind(write.path));

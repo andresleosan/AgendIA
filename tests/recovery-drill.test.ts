@@ -31,6 +31,20 @@ it('post_snapshot_revocation_deletion_withdrawal_fail_closed', () => {
   for (const id of ['witness_missing', 'post_snapshot_invalidations', 'consent_withdrawn', 'deleted_and_expired', 'cancelled_offer_invalid_proposal', 'auth_fresh_login_no_role']) expect(report.cases[id]).toBe('pass');
   expect(report.blockers).toEqual(expect.arrayContaining(['INVALIDATIONS_REQUIRE_APPLICATION', 'SYNTHETIC_ONLY', 'OPERATIONAL_APPROVAL_REQUIRED']));
 });
+it('snapshot before admission cutover cannot roll back the marker or policy restrictions', async () => {
+  const { buildRecoveryReconciliation } = await import('../scripts/lib/recovery-reconcile.mjs');
+  const { recoveryManifest, recoverySql, recoverySha, recoveryMigrations } = await import('./recovery-backup-fixtures');
+  const { sanitizeBackupSql } = await import('../scripts/lib/recovery-backup.mjs');
+  const now = Date.parse('2030-01-01T12:00:00Z'), manifest = recoveryManifest(sanitizeBackupSql({ sql: recoverySql(), now, sourceSha: recoverySha, migrations: recoveryMigrations }).sanitization);
+  const paths = ['serverSettings/bookingAdmissionProtocol', `serverSettings/booking_policy_${'a'.repeat(64)}`, `serverSettings/booking_dispatch_${'b'.repeat(64)}`];
+  const witness = { complete: true, gaps: [], resourceId: 'a'.repeat(64), startedAt: 0, observedAt: now, fromRevision: manifest.d1Revision, toRevision: manifest.d1Revision + 1, intents: [{ status: 'complete', scopes: paths.map(path => ({ path, reason: 'mutation' })) }] };
+  const plan = buildRecoveryReconciliation({ manifest, witness, currentAuth: null, now });
+  expect(plan.bookingAdmission).toMatchObject({ minimumReader: 2, requiredRelease: 'enforce', preserveOutsideSnapshot: paths });
+  expect(plan.blockers).toContain('BOOKING_ADMISSION_FLOOR_REQUIRED');
+  expect(plan.canAdmit).toBe(false);
+  const empty = buildRecoveryReconciliation({ manifest, witness: null, currentAuth: null, now });
+  expect(empty.bookingAdmission).toMatchObject({ minimumReader: 2, requiredRelease: 'enforce', initializeBeforeWrites: true });
+});
 it('unknown_job_and_later_receipt_no_second_effect', () => {
   expect(report.cases.producers_disabled).toBe('pass');
   expect(report.cases.uncertain_quota_and_later_receipt).toBe('pass');

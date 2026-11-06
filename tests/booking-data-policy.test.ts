@@ -10,7 +10,7 @@ afterEach(() => vi.unstubAllEnvs());
 describe('private booking data classification', () => {
   it('inherits unreviewed legacy general capability without writing or public policy', async () => {
     const { db, rows } = setup();
-    expect(await readBookingDataPolicy(id, db)).toEqual({ policy: null, capability: { configured: false, revision: 0, dataMode: 'general', representedMinorsEnabled: false } });
+    expect(await readBookingDataPolicy(id, db)).toEqual({ policy: null, capability: { configured: false, revision: 0, dataMode: 'general', representedMinorsEnabled: false, admission: 'active', canStartBooking: true, canUseInference: true } });
     expect(rows.has(`serverSettings/${bookingDataPolicyKey(id)}`)).toBe(false);
     expect(publicBusiness(business)).not.toHaveProperty('bookingDataPolicy');
   });

@@ -19,7 +19,11 @@ export function buildRecoveryReconciliation({ manifest, witness, currentAuth, no
   const authCurrent = currentAuth?.complete === true && currentAuth.resourceId === witness?.resourceId && currentAuth.requiresNewLogin === true && currentAuth.iamVerified === true && Number.isSafeInteger(currentAuth.observedAt) && currentAuth.observedAt <= now && currentAuth.observedAt >= now - 15 * 60000 && Array.isArray(currentAuth.invalidatedUids) && currentAuth.invalidatedUids.every(uid => typeof uid === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(uid));
   if (!authCurrent) blockers.push('CURRENT_AUTH_REQUIRED');
   if (invalidations.length) blockers.push('INVALIDATIONS_REQUIRE_APPLICATION');
+  // A snapshot cannot prove that a later cutover or restrictive revision never existed.
+  blockers.push('BOOKING_ADMISSION_FLOOR_REQUIRED');
+  const bookingAdmission = { minimumReader: 2, requiredRelease: 'enforce', recoveryCompatible: true, initializeBeforeWrites: true,
+    preserveOutsideSnapshot: [...new Set(['serverSettings/bookingAdmissionProtocol', ...invalidations.map(scope => scope.path).filter(path => /^serverSettings\/booking_(?:policy_|dispatch_)/.test(path))])] };
   const plan = { formatVersion: 1, candidateSha: manifest.sourceSha, manifestSha256: sha256(canonicalJson(manifest)), witnessSha256: witness ? sha256(canonicalJson(witness)) : null, currentAuthoritySha256: authCurrent ? sha256(canonicalJson(currentAuth)) : null, resourceId: witness?.resourceId ?? null, fromRevision: manifest.d1Revision, toRevision: witness?.toRevision ?? null, createdAt: now,
-    invalidations, blockedUids: authCurrent ? [...currentAuth.invalidatedUids] : [], blockers: [...new Set(blockers)], effectsEnabled: false, uncertainEffects: 'preserve_without_retry', canAdmit: false };
+    invalidations, bookingAdmission, blockedUids: authCurrent ? [...currentAuth.invalidatedUids] : [], blockers: [...new Set(blockers)], effectsEnabled: false, uncertainEffects: 'preserve_without_retry', canAdmit: false };
   return { ...plan, reconciliationSha: sha256(canonicalJson(plan)) };
 }

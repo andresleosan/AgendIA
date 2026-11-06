@@ -73,7 +73,7 @@ try {
     await new Promise(resolve => setTimeout(resolve, 250));
   }
   if (!authReady) throw new Error(`Recovery Auth emulator startup timeout: ${authOutput}`);
-  const test = spawn(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', 'tests/firestore.rules.test.ts', 'tests/firestore.integration.test.ts', 'tests/waitlist-offers-firestore.test.ts', 'tests/business-team-firestore.test.ts', 'tests/response-quota-recovery-firestore.test.ts', 'tests/client-appointments-pagination-firestore.test.ts', 'tests/recovery-auth-emulator.test.ts', 'tests/recovery-admission.test.ts'], {
+  const test = spawn(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', 'tests/firestore.rules.test.ts', 'tests/firestore.integration.test.ts', 'tests/waitlist-offers-firestore.test.ts', 'tests/business-team-firestore.test.ts', 'tests/response-quota-recovery-firestore.test.ts', 'tests/client-appointments-pagination-firestore.test.ts', 'tests/booking-admission-firestore.test.ts', 'tests/recovery-auth-emulator.test.ts', 'tests/recovery-admission.test.ts'], {
     stdio: 'inherit', windowsHide: true,
     env: { ...process.env, FIRESTORE_EMULATOR_HOST: `${host}:${port}`, FIREBASE_AUTH_EMULATOR_HOST: `${host}:${authPort}`, FIREBASE_ADMIN_PROJECT_ID: 'demo-sarin-bot', SARIN_RECOVERY_AUTH_TEST: 'true', SARIN_RECOVERY_DRILL_AUTH_TEST: 'true' },
   });

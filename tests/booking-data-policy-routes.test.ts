@@ -20,6 +20,6 @@ it('authenticates admin in Next and rejects query variants and oversized or extr
   expect((await patch({ ...body, reason: 'a'.repeat(9000) })).status).toBe(413);
   expect((await patch(body)).status).toBe(200);
   const response = await capability(new Request('http://localhost/api/businesses/demo/booking-policy', { headers: { authorization: 'Bearer synthetic' } }), { params: Promise.resolve({ id: 'demo' }) });
-  expect(response.status).toBe(200); expect(await response.json()).toEqual({ configured: true, revision: 1, dataMode: 'general', representedMinorsEnabled: false });
+  expect(response.status).toBe(200); expect(await response.json()).toEqual({ configured: true, revision: 1, dataMode: 'general', representedMinorsEnabled: false, admission: 'active', canStartBooking: true, canUseInference: true });
   expect(response.headers.get('Cache-Control')).toBe('no-store');
 });

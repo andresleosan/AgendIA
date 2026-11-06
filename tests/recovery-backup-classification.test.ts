@@ -6,6 +6,33 @@ import { recoveryAppointment, recoveryNow, recoverySha } from './recovery-backup
 
 const classify = (path: string, data: unknown) => classifyBackupDocument(path, data, recoveryNow);
 describe('daily backup classification', () => {
+  it('rejects unknown consent scopes and actions even with historical receipt IDs', async () => {
+    const { consentDocuments } = await import('@/lib/server/consent');
+    const documents = consentDocuments('account');
+    const receipt = { uid: 'demo-user', scope: 'account', businessId: null, requestId: 'demo-consent', action: 'accept', revision: 1, occurredAt: recoveryNow, preauthorizedAt: recoveryNow, termsAccepted: true, dataAuthorized: true, documents };
+    const path = 'serverSettings/consent_receipt_demo';
+    expect(classify(path, receipt).data).toEqual(receipt);
+    expect(classify('serverSettings/demo-historical-receipt', receipt).data).toEqual(receipt);
+    const state = { version: 1, uid: 'demo-user', scope: 'clinical_history', businessId: null, revision: 1, active: true, fingerprint: documents.fingerprint, receiptId: 'demo-receipt' };
+    expect(() => classify('serverSettings/consent_state_demo', state)).toThrow('D1_BACKUP_UNCLASSIFIED');
+    for (const invalid of [{ ...receipt, scope: 'clinical_history' }, { ...receipt, action: 'share_clinical_history' }, { ...receipt, documents: { ...documents, scope: 'clinical_history' } }]) {
+      expect(() => classify(path, invalid)).toThrow('D1_BACKUP_UNCLASSIFIED');
+    }
+  });
+  it('rejects unknown subject data modes, document scopes and receipt actions', async () => {
+    const { bookingSubjectContent } = await import('@/lib/booking-subject-legal');
+    const business = { id: 'demo-business', name: 'Demo', phoneWhatsApp: '+573000000000' };
+    const subjectCase = { bookingRequestId: 'demo-request', subjectKind: 'self' as const };
+    for (const dataMode of ['general', 'health'] as const) {
+      const documents = { ...bookingSubjectContent(business, subjectCase, { configured: true, revision: 1, dataMode, representedMinorsEnabled: false }), fingerprint: 'a'.repeat(64) };
+      const receipt = { uid: 'demo-user', scope: 'booking_subject', businessId: business.id, case: subjectCase, requestId: 'demo-consent', action: 'accept', revision: 1, occurredAt: recoveryNow, policyRevision: 1, decisions: documents.requirements, documents, operationHash: 'b'.repeat(64) };
+      const path = 'serverSettings/subject_receipt_demo';
+      expect(classify(path, receipt).data).toEqual(receipt);
+      for (const invalid of [{ ...receipt, action: 'share_clinical_history' }, { ...receipt, documents: { ...documents, dataMode: 'clinical_history' } }, { ...receipt, documents: { ...documents, scope: 'clinical_history' } }]) {
+        expect(() => classify(path, invalid)).toThrow('D1_BACKUP_UNCLASSIFIED');
+      }
+    }
+  });
   it('all_current_paths_and_fields_are_classified', () => {
     expect([...BACKUP_CLASSIFIED_ROOTS].sort()).toEqual([...DATA_COLLECTIONS].sort());
     expect(BACKUP_CLASSIFIED_CHILDREN).toEqual(DATA_CHILDREN);
@@ -110,6 +137,23 @@ describe('daily backup classification', () => {
     expect(classify('whatsappConversations/demo-conversation', current).data.controlEvents).toEqual(current.controlEvents);
     expect(classify('whatsappMessageIds/demo-message', { outboxId: 'demo-outbox', expiresAt: recoveryNow + 1000 }).data).toMatchObject({ outboxId: 'demo-outbox' });
     expect(classify('chatStates/demo-state', { version: 1, selection: { proposalId: 'demo-proposal' }, updatedAt: recoveryNow, expiresAt: recoveryNow + 1000 }).kind).toBe('exclude');
+  });
+  it('scrubs valid large WhatsApp ciphertext without rejecting the whole backup', async () => {
+    const { encryptWhatsApp } = await import('@/lib/server/whatsapp-security');
+    vi.stubEnv('WHATSAPP_ENABLED', 'true');
+    vi.stubEnv('WHATSAPP_RETENTION_ENABLED', 'true');
+    vi.stubEnv('WHATSAPP_APP_SECRET', 'demo-secret-123456');
+    vi.stubEnv('WHATSAPP_VERIFY_TOKEN', 'demo-verify-123456');
+    vi.stubEnv('WHATSAPP_CONTENT_KEY', Buffer.alloc(32, 1).toString('base64'));
+    try {
+      const content = encryptWhatsApp({ text: 'PRIVATE'.repeat(2000) }, 'demo-conversation');
+      expect(content.data.length).toBeGreaterThan(12000);
+      const data = { businessId: 'demo-business', phoneNumberId: '12345', wabaId: '23456', mode: 'bot', revision: 1, updatedAt: recoveryNow, lastInboundAt: null, lastHumanAt: null, controlChangedAt: recoveryNow, bodyExpiresAt: recoveryNow + 1000, expiresAt: recoveryNow + 2000, content };
+      const result = classify('whatsappConversations/demo-conversation', data);
+      expect(result.data.content).toBeNull();
+      expect(JSON.stringify(result)).not.toContain(content.data);
+      expect(() => classify('whatsappConversations/demo-conversation', { ...data, content: { ...content, privateExtension: 'PRIVATE' } })).toThrow('D1_BACKUP_UNCLASSIFIED');
+    } finally { vi.unstubAllEnvs(); }
   });
   it('retains legal fractional prices without admitting unknown appointment kinds', () => {
     const result = classify('businesses/demo-business/appointments/demo-appointment', { ...recoveryAppointment, price: 1000.5 });

@@ -45,8 +45,10 @@ const proof = o({ receiptId: s, fingerprint: h, policyRevision: n });
 const policy = o({ version: v, blocked: b, futureAppointmentLimit: n.nullable(), reason: s, updatedBy: s, updatedAt: n });
 const subjectDecisions = o({ dataAuthorized: b, sensitiveDataAuthorized: b, representationDeclared: b });
 const consentBusiness = o({ id: s, name: s, phoneWhatsApp: s });
-const subjectDocuments = o({ ...strings('version scope dataMode dataAuthorization sensitiveDataAuthorization representationDeclaration notice alternative rights processors fingerprint'), business: consentBusiness, case: subjectCase, policyRevision: n, purposes: z.array(s), categories: z.array(s), requirements: subjectDecisions });
-const consentDocuments = o({ ...strings('version scope fingerprint'), business: consentBusiness.nullable(), ...optional(strings('termsAcceptance terms privacy dataAuthorization notice rights processors')), purposes: z.array(s).optional(), categories: z.array(s).optional() });
+const consentScope = z.enum(['account', 'business_client', 'platform_support']);
+const consentAction = z.enum(['accept', 'revoke']);
+const subjectDocuments = o({ ...strings('version dataAuthorization sensitiveDataAuthorization representationDeclaration notice alternative rights processors fingerprint'), scope: z.literal('booking_subject'), dataMode: z.enum(['general', 'health']), business: consentBusiness, case: subjectCase, policyRevision: n, purposes: z.array(s), categories: z.array(s), requirements: subjectDecisions });
+const consentDocuments = o({ ...strings('version fingerprint'), scope: consentScope, business: consentBusiness.nullable(), ...optional(strings('termsAcceptance terms privacy dataAuthorization notice rights processors')), purposes: z.array(s).optional(), categories: z.array(s).optional() });
 const teamState = o({ version: v, businessId: s, ...counts('revision requestedCount activeCount'), requestEvents: z.array(o({ at: n, requestHash: h })) });
 const teamCommand = o({ ...strings('kind businessId actorUid requestId'), expectedMembershipRevision: n, expectedTeamRevision: n.nullable(), resourceId: s.nullable() });
 const teamMember = o({ version: v, ...strings('id businessId memberUid status businessLabel lastEventId'), ...counts('revision createdAt updatedAt lastRequestedAt'), role, resourceId: s.nullable(), ownerUidAtApproval: s.nullable() });
@@ -56,7 +58,7 @@ const schedulePolicy = o({ version: v, businessId: s, revision: n, updatedAt: n.
 const budgetLimits = o({ globalDayUsd: z.number(), globalMonthUsd: z.number(), businessDayUsd: z.number(), businessMonthUsd: z.number(), ...counts('globalDayTokens globalMonthTokens businessDayTokens businessMonthTokens') });
 const totals = counts('calls successfulCalls failedCalls usageReportedCalls missingUsageCalls costEstimatedCalls unknownCostCalls promptTokens cacheHitTokens cacheMissTokens completionTokens costNanoMin costNanoMax');
 const usageCounters = counts('sent delivered read failed unknown serviceDelivered utilityDelivered marketingDelivered otherDelivered freeDelivered regularDelivered unknownPricingDelivered');
-const cipher = o({ iv: s, tag: s, data: s, version: v.optional() });
+const cipher = o({ iv: z.string().max(24), tag: z.string().max(24), data: z.string().max(400000), version: v.optional() });
 const whatsappCommon = { ...strings('businessId phoneNumberId wabaId'), ...counts('bodyExpiresAt expiresAt') };
 const quotaCursor = o({ version: z.literal(2), after: h.nullable(), discoveryDone: b });
 const budgetCall = o({ version: v, ...strings('id callId provider model pricingVersion businessId mode'), ...counts('inputNanoUsdPerToken outputNanoUsdPerToken createdAt maxTokens heldTokens maxCostNanoUsd'), actorHash: h, requestHash: h, periodIds: z.array(s), status: s, ...nullable(counts('actualTokens actualCostNanoUsd settledAt')), reconciliation: o({ resolution: s, reason: s, evidence: s, actorHash: h, at: n }).optional() });
@@ -90,12 +92,12 @@ function serverSchema(id, data) {
   if (/^invitation_code_/.test(id)) return o({ version: v, invitationId: s, codeHash: h });
   if (/^invitation_command_/.test(id)) return o({ fingerprint: h, action: s, at: n });
   if (/^consent_claim_/.test(id)) return o({ uid: s, receiptId: s, occurredAt: n });
-  if (/^consent_state_/.test(id)) return o({ version: v, uid: s, scope: s, businessId: s.nullable(), revision: n, active: b, fingerprint: h, receiptId: s });
+  if (/^consent_state_/.test(id)) return o({ version: v, uid: s, scope: consentScope, businessId: s.nullable(), revision: n, active: b, fingerprint: h, receiptId: s });
   if (/^subject_state_/.test(id)) return o({ version: v, scope: z.literal('booking_subject'), uid: s, businessId: s, case: subjectCase, revision: n, active: b, fingerprint: h, receiptId: s, policyRevision: n });
   // Historical consent receipts can have noncanonical IDs; their complete field schema still applies.
   if (/^(?:consent_receipt_|subject_receipt_)/.test(id) || ['account', 'business_client', 'platform_support', 'booking_subject'].includes(data.scope) && ['accept', 'revoke'].includes(data.action) && data.documents) return data.scope === 'booking_subject'
-    ? o({ uid: s, scope: z.literal('booking_subject'), businessId: s, case: subjectCase, requestId: s, action: s, revision: n, occurredAt: n, policyRevision: n, decisions: subjectDecisions, documents: subjectDocuments, operationHash: h })
-    : o({ uid: s, scope: s, businessId: s.nullable(), requestId: s, action: s, revision: n, occurredAt: n, preauthorizedAt: n.nullable(), termsAccepted: b, dataAuthorized: b, documents: consentDocuments, operationHash: h.optional() });
+    ? o({ uid: s, scope: z.literal('booking_subject'), businessId: s, case: subjectCase, requestId: s, action: consentAction, revision: n, occurredAt: n, policyRevision: n, decisions: subjectDecisions, documents: subjectDocuments, operationHash: h })
+    : o({ uid: s, scope: consentScope, businessId: s.nullable(), requestId: s, action: consentAction, revision: n, occurredAt: n, preauthorizedAt: n.nullable(), termsAccepted: b, dataAuthorized: b, documents: consentDocuments, operationHash: h.optional() });
   if (id === 'pilotAiBudget') return o({ version: n, paused: b, limits: budgetLimits, reason: s, updatedAt: n, updatedBy: s });
   if (/^pilotAiBudgetBusiness_/.test(id)) return o({ businessId: s, version: n, limits: o({ businessDayUsd: z.number(), businessMonthUsd: z.number() }).nullable(), reason: s, updatedAt: n, updatedBy: s });
   if (id === 'ycloud_retry_diagnostic') return o({ version: v, runId: s, bootId: s, ...counts('createdAt expiresAt requests'), status: z.enum(['armed', 'pinned', 'compatible', 'incompatible', 'inconclusive', 'aborted', 'closed']), attempts: z.array(o({ eventId: s, bodySha256: h, arrivalUtc: s, signedT: n, hmacValid: z.literal(true) })) });

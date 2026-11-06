@@ -89,9 +89,9 @@ test('failed artifacts expire after 48h but summaries last 30d; cleanup defaults
     assert.equal((await cleanupRecoveryBackups(f.env,at+31*86400000)).summaries.length,1);
   } finally {f.sqlite.close();}
 });
-async function put(f,w,bytes,id=crypto.randomUUID()) {
+async function put(f,w,bytes,id=crypto.randomUUID(),now=at) {
   const entry={id,bytes:bytes.length,sha256:await recoveryDigest(bytes)};
-  const response=await handleRecoveryOutbound(new Request('http://sarin-backup.internal/execute',{method:'POST',body:bytes,headers:{'x-sarin-backup-command':JSON.stringify({work:w,op:'archive-put',entry})}}),f.env,ctx,at);
+  const response=await handleRecoveryOutbound(new Request('http://sarin-backup.internal/execute',{method:'POST',body:bytes,headers:{'x-sarin-backup-command':JSON.stringify({work:w,op:'archive-put',entry})}}),f.env,ctx,now);
   return {entry,response};
 }
 test('seal follows readback of all ciphertext, immutable retry resolves by status, no overwrite',async()=>{
@@ -159,6 +159,42 @@ test('real Workerd D1 CAS and private R2 readback support the same sealed protoc
     assert.equal((await r.db.prepare('SELECT count(*) AS n FROM backup_catalog').first()).n,1);
     assert.equal((await r.bucket.get(`ciphertext/${entries[0].id}`)).size,3);
   }finally{await r.dispose();}
+});
+
+for (const damage of ['missing', 'corrupt', 'unavailable', 'none']) test(`cleanup checks surviving ciphertext before deleting readable archives: ${damage}`, async () => {
+  const f = fixture();
+  try {
+    const sets = [];
+    for (let day = 0; day < 10; day++) {
+      const now = at + day * 86400000, w = await work(f, now);
+      await call(f, w, 'consume', {}, now);
+      const entries = [];
+      for (const value of [day + 1, day + 11]) {
+        const { entry, response } = await put(f, w, new Uint8Array([value]), crypto.randomUUID(), now);
+        assert.equal(response.status, 200);
+        entries.push(entry);
+      }
+      const envelope = { formatVersion: 1, backupId: w.backupId, createdAt: now, sealedAt: now, status: 'sealed', keyId: 'a'.repeat(64), objects: [entries[0]], manifest: entries[1] };
+      const snapshotTimes = Object.fromEntries(['d1', 'r2', 'auth', 'config'].map(k => [k, { startedAt: now, recoverableAt: now, completedAt: now }]));
+      assert.equal((await call(f, w, 'seal', { envelope, snapshotTimes }, now)).status, 200);
+      sets.push({ backupId: w.backupId, sealedAt: now, recoverableAt: now, prechange: false, objects: entries });
+    }
+    const now = at + 10 * 86400000, plan = planRecoveryRetention(sets, [], now);
+    assert.ok(plan.remove.length > 0);
+    for (const set of sets.filter(s => plan.keep.includes(s.backupId))) {
+      const key = `ciphertext/${set.objects[0].id}`;
+      if (damage === 'missing') f.objects.delete(key);
+      if (damage === 'corrupt') f.objects.set(key, new Uint8Array([255]));
+    }
+    if (damage === 'unavailable') f.env.SARIN_BACKUPS.get = async () => { throw Error('storage unavailable'); };
+    f.env.SARIN_BACKUP_CLEANUP_ENABLED = 'true';
+    const result = await cleanupRecoveryBackups(f.env, now, false);
+    assert.equal(result.dryRun, damage !== 'none');
+    for (const id of plan.remove) {
+      assert.equal(!!f.sqlite.prepare('SELECT backup_id FROM backup_catalog WHERE backup_id=?').get(id), damage !== 'none');
+      for (const entry of sets.find(s => s.backupId === id).objects) assert.equal(f.objects.has(`ciphertext/${entry.id}`), damage !== 'none');
+    }
+  } finally { f.sqlite.close(); }
 });
 test('prechange claims are separate from the daily slot and immutable restore evidence follows the set',async()=>{
   const f=fixture();try{

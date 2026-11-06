@@ -246,7 +246,7 @@ export function planRecoveryRetention(sets: RetentionSet[], failed: FailedSet[],
   }
   for (const month of months) { const s = sorted.find(s => bogota(s.recoverableAt).startsWith(month)); if (s) categories[s.backupId].push('monthly'); else gaps.months.push(month); }
   for (const s of sorted) if (s.prechange && now - s.sealedAt < 7 * 86400000) categories[s.backupId].push('prechange');
-  if (sorted.length) categories[sorted[0].backupId].push('last-usable');
+  if (sorted.length) categories[sorted[0].backupId].push('latest-sealed');
   const keep = sets.filter(s => categories[s.backupId].length).map(s => s.backupId), remove = sets.filter(s => !categories[s.backupId].length).map(s => s.backupId);
   const expired = failed.filter(s => now - s.finishedAt >= 48 * 3600000), summaries = failed.filter(s => now - s.finishedAt >= 30 * 86400000).map(s => s.backupId);
   const pinned = new Set([...sets.filter(s => keep.includes(s.backupId)), ...failed.filter(s => !expired.includes(s))].flatMap(s => s.objects.map(o => o.id)));
@@ -256,11 +256,31 @@ export function planRecoveryRetention(sets: RetentionSet[], failed: FailedSet[],
 export async function cleanupRecoveryBackups(env: Env, now = Date.now(), dryRun = true) {
   if (!enabled(env) || !env.SARIN_RECOVERY_DB) return { ...planRecoveryRetention([], [], now), disabled: true };
   const db = dbFor(env), catalogs = (await db.prepare('SELECT * FROM backup_catalog').all<Catalog>()).results;
-  const refs = (await db.prepare('SELECT r.backup_id,o.object_id,o.bytes FROM backup_run_objects r JOIN backup_objects o ON o.object_id=r.object_id').all<{ backup_id: string; object_id: string; bytes: number }>()).results;
+  const refs = (await db.prepare('SELECT r.backup_id,o.object_id,o.bytes,o.sha256,o.verified FROM backup_run_objects r JOIN backup_objects o ON o.object_id=r.object_id').all<{ backup_id: string; object_id: string; bytes: number; sha256: string; verified: number }>()).results;
   const objects = (id: string) => refs.filter(r => r.backup_id === id).map(r => ({ id: r.object_id, bytes: r.bytes }));
   const failures = (await db.prepare("SELECT backup_id,finished_at FROM backup_runs WHERE phase='failed' AND finished_at IS NOT NULL").all<{ backup_id: string; finished_at: number }>()).results;
   const plan = planRecoveryRetention(catalogs.map(c => ({ backupId: c.backup_id, sealedAt: c.sealed_at, recoverableAt: c.recoverable_at, prechange: !!c.prechange, objects: objects(c.backup_id) })), failures.map(f => ({ backupId: f.backup_id, finishedAt: f.finished_at, objects: objects(f.backup_id) })), now);
   if (dryRun || env.SARIN_BACKUP_CLEANUP_ENABLED !== 'true' || !env.SARIN_BACKUPS || await sourceObjectsPinned(env, now)) return plan;
+  if (plan.remove.length) {
+    let intact = false;
+    const signal = AbortSignal.timeout(RECOVERY_ATTEMPT_MS);
+    for (const catalog of catalogs.filter(c => plan.keep.includes(c.backup_id)).sort((a, b) => b.recoverable_at - a.recoverable_at)) {
+      try {
+        const envelope: unknown = JSON.parse(catalog.envelope);
+        if (!validEnvelope(envelope, catalog.backup_id)) continue;
+        const entries = [envelope.manifest, ...envelope.objects], linked = refs.filter(r => r.backup_id === catalog.backup_id);
+        if (linked.length !== entries.length || linked.some(r => !r.verified || !entries.some(e => e.id === r.object_id && e.bytes === r.bytes && e.sha256 === r.sha256))) continue;
+        for (const entry of entries) {
+          signal.throwIfAborted();
+          const object = await env.SARIN_BACKUPS.get(objectKey(entry.id));
+          if (!object || object.size !== entry.bytes || await recoveryDigest(await recoveryBytes(object.body, RECOVERY_CHUNK_BYTES, AbortSignal.any([signal, AbortSignal.timeout(30000)]))) !== entry.sha256) fail('READBACK');
+        }
+        intact = true;
+        break;
+      } catch { if (signal.aborted) break; }
+    }
+    if (!intact) return { ...plan, blocked: 'NO_INTACT_RETAINED_BACKUP' };
+  }
   // Delete references first. Any uncertain storage delete leaves an indexed orphan for retry.
   for (const id of [...plan.remove, ...plan.failed]) {
     await db.batch([db.prepare('DELETE FROM backup_catalog WHERE backup_id=?').bind(id), db.prepare('DELETE FROM backup_run_objects WHERE backup_id=?').bind(id), db.prepare('UPDATE backup_runs SET artifacts_cleaned=1 WHERE backup_id=?').bind(id)]);

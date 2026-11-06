@@ -16,7 +16,7 @@ Leer únicamente la tarea seleccionada por el coordinador, su aceptación, depen
 
 - No usar `xhigh`, `max` o `ultra` por defecto. Proponerlos solo ante una dificultad concreta que no resolvió un intento bien dirigido, explicando qué se espera mejorar. Una espera de CI, un problema de acceso o una decisión pendiente del dueño no se resuelven subiendo esfuerzo.
 - Un D/P de permisos, ledger, pagos o datos sensibles puede necesitar alto/Astra; ser documental no lo vuelve mecánico. Un B simple no necesita Astra por ser código. Una integración financiera o de resiliencia puede requerir Astra si implica reconstruir invariantes, no solo ejecutar checks.
-- Escalar por evidencia: fallo reproducible sin causa, contrato contradictorio o riesgo nuevo. Conservar pruebas/estado, recomendar una configuración superior y explicar el motivo; no reinvestigar desde cero ni fingir haber cambiado el modelo. Mantener validaciones y revisiones requeridas.
+- Reevaluar internamente por evidencia: fallo reproducible sin causa, contrato contradictorio o riesgo nuevo. Conservar pruebas/estado y el motivo para la recomendación del cierre completo; no interrumpir con recomendaciones durante la tarea salvo que el propietario las pida directamente. No reinvestigar desde cero ni fingir haber cambiado el modelo. Mantener validaciones y revisiones requeridas.
 - Estas son estimaciones iniciales de ingeniería, no resultados de un benchmark Sarin ni promesas de porcentajes de ahorro. Menos esfuerzo suele reducir razonamiento, pero un modelo insuficiente puede gastar más al rehacer trabajo. Precios API y consumo del plan Codex no son equivalentes.
 
 ## Aplicación al proyecto

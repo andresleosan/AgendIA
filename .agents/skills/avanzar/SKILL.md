@@ -25,6 +25,12 @@ node .agents/skills/avanzar/scripts/check-plan.mjs --next
 
 El verificador valida y selecciona; no ejecuta `checks[].command`. Leer esos comandos como contratos revisables, identificando CWD y simulaciones antes de ejecutarlos.
 
+## Modelo y esfuerzo por tarea
+
+El propietario pidió recomendar modelo/esfuerzo para ahorrar tokens. Aplicar la [guía de selección](../../../docs/tooling/sarin-model-selection.md) a la tarea elegida, sin volver a analizar la cola completa. Antes de investigar extensamente, indicar ID, modelo, esfuerzo y una razón breve. Es una recomendación: no cambiar configuración global ni pausar automáticamente la ejecución.
+
+Al cerrar, añadir **«Próxima tarea: ID. Modelo: nombre. Esfuerzo: nivel. Motivo: una frase.»** usando el siguiente ID real del selector. Si queda trabajo pendiente, recomendar para reanudar ese mismo ID; sin tarea elegible, informar el bloqueo. Revaluar la estimación con el contrato y `resume`, sin rebajar pruebas, permisos ni evidencia de entrega. La preferencia se conserva en `preferences.modelSelection`.
+
 ## Selección y revisión
 
 1. Si el plan v1 sigue `pending_review`, el primer `/avanzar` posterior a su entrega registra la revisión aprobada de esa versión con referencia al mensaje. Si el mensaje pide cambios, revisarlos en vez de aprobar. No reutilizar esta aprobación para un nuevo contrato, versión o efecto externo.

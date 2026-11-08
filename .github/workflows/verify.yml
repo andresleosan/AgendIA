@@ -36,6 +36,30 @@ jobs:
           cache_dependency_path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
+      - name: Prepare verified age for synthetic recovery tests
+        shell: bash
+        run: |
+          agendia_age_context=$(mktemp -d "$RUNNER_TEMP/agendia-age.XXXXXX")
+          agendia_age_container=""
+          trap 'if [ -n "$agendia_age_container" ]; then docker rm "$agendia_age_container" >/dev/null; fi; rm -rf -- "$agendia_age_context"' EXIT
+          mkdir -p "$agendia_age_context/scripts/lib"
+          cp scripts/prepare-recovery-age.mjs "$agendia_age_context/scripts/"
+          cp scripts/lib/recovery-age.lock.json "$agendia_age_context/scripts/lib/"
+          # This isolated test-tool image never enters the production UI image.
+          docker build -t agendia-recovery-age -f - "$agendia_age_context" <<'DOCKERFILE'
+          FROM golang:1.26.1-alpine@sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039 AS sigsum-builder
+          RUN go install sigsum.org/sigsum-go/cmd/sigsum-verify@v0.13.1
+          FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS recovery-age
+          COPY --from=sigsum-builder /go/bin/sigsum-verify /usr/local/bin/sigsum-verify
+          COPY scripts/prepare-recovery-age.mjs /prepare/scripts/prepare-recovery-age.mjs
+          COPY scripts/lib/recovery-age.lock.json /prepare/scripts/lib/recovery-age.lock.json
+          RUN node /prepare/scripts/prepare-recovery-age.mjs --directory /usr/local/bin
+          DOCKERFILE
+          agendia_age_container=$(docker create agendia-recovery-age)
+          docker cp "$agendia_age_container:/usr/local/bin/age" "$RUNNER_TEMP/age"
+          docker cp "$agendia_age_container:/usr/local/bin/age-keygen" "$RUNNER_TEMP/age-keygen"
+          chmod 755 "$RUNNER_TEMP/age" "$RUNNER_TEMP/age-keygen"
+          echo "SARIN_TEST_AGE_PATH=$RUNNER_TEMP/age" >> "$GITHUB_ENV"
       - run: pnpm test
       - run: node --test pages-gateway/tests/*.test.mjs
       - run: pnpm --filter agendia-cloudflare-host --fail-if-no-match run check

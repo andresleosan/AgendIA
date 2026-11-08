@@ -41,6 +41,7 @@ export async function assertBusinessAllowsInference(businessId: string, db: Data
 }
 export async function saveBookingDataPolicy(admin: ChatActor, supplied: z.input<typeof bookingDataPolicyInputSchema>, db: Database = getAdminDb()): Promise<BookingDataPolicy> {
   if (!isSuperadmin(admin.uid)) throw new HttpError(403, 'Forbidden');
+  if (BOOKING_ADMISSION_RELEASE !== 'prepare') throw new HttpError(503, 'La clasificación requiere un comando compatible.', 'BOOKING_POLICY_UNAVAILABLE');
   const input = bookingDataPolicyInputSchema.parse(supplied);
   return db.runTransaction(async tx => {
     const [business, current] = await Promise.all([tx.get(db.collection('businesses').doc(input.businessId)), readBookingDataPolicy(input.businessId, db, tx)]);

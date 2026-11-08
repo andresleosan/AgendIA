@@ -78,14 +78,16 @@ export type BookingPolicyTransitionCommand = z.infer<typeof commandSchema>;
 
 function assertActor(actor: ChatActor, ownerUid: unknown, command?: BookingPolicyTransitionCommand) {
   if (!actor.uid || !isSuperadmin(actor.uid) && actor.uid !== ownerUid) throw new HttpError(403, 'Esta operación requiere al dueño vigente o superadministración.');
+  if (command && ['declare', 'withdraw'].includes(command.action) && actor.uid !== ownerUid) throw new HttpError(403, 'Esta operación requiere al dueño vigente.');
   if (command && !isSuperadmin(actor.uid) && !['declare', 'withdraw'].includes(command.action)) throw new HttpError(403, 'Esta operación requiere superadministración.');
 }
 
-export async function beginBookingPolicyTransition(actor: ChatActor, supplied: BookingPolicyTransitionCommand, db: Database = getAdminDb(), release: BookingAdmissionRelease = BOOKING_ADMISSION_RELEASE) {
+export async function beginBookingPolicyTransition(actor: ChatActor, supplied: BookingPolicyTransitionCommand, db: Database = getAdminDb(), release: BookingAdmissionRelease = BOOKING_ADMISSION_RELEASE, requestHash?: string) {
   const command = commandSchema.parse(supplied);
   if (release !== 'enforce') throw unavailable();
   const gate = gateFor(command.businessId), token = {}; gate.closing.add(token);
-  const operationHash = createHash('sha256').update(JSON.stringify(commandSchema.parse(command))).digest('hex');
+  // Public commands bind replay to accepted input, independent of later policy targets.
+  const operationHash = requestHash === undefined ? createHash('sha256').update(JSON.stringify(commandSchema.parse(command))).digest('hex') : z.string().regex(/^[a-f0-9]{64}$/).parse(requestHash);
   try {
     // Exclude the durable-marker→fetch gap, then persist without waiting for response.
     await gate.starting;
@@ -103,7 +105,10 @@ export async function beginBookingPolicyTransition(actor: ChatActor, supplied: B
       }
       if (current.capability.revision !== command.expectedRevision) throw conflict();
       if (current.capability.admission === 'transitioning' && !(isSuperadmin(actor.uid) && command.action === 'suspend' && command.target.status === 'suspended' && command.target.origin === 'admin')) throw transitioning();
-      if (!isSuperadmin(actor.uid)) {
+      const suspended = current.policy?.version === 2 && (current.policy.status === 'suspended' || current.policy.transition?.target.status === 'suspended');
+      if (command.action === 'classify' && suspended) throw new HttpError(409, 'Levanta la suspensión con una reanudación administrativa.', 'BOOKING_ADMIN_REVIEW_REQUIRED');
+      if (command.action === 'resume' && !suspended) throw conflict();
+      if (command.action === 'declare' || command.action === 'withdraw') {
         if (current.policy && (current.policy.version !== 2 || current.policy.origin !== 'owner' || current.policy.dataMode !== 'general' || current.policy.representedMinorsEnabled || current.policy.status === 'suspended')) throw new HttpError(403, 'La clasificación requiere revisión administrativa.');
         if (command.target.origin !== 'owner' || command.target.dataMode !== 'general' || command.target.representedMinorsEnabled || command.target.declaration?.ownerUid !== actor.uid || command.target.status !== (command.action === 'withdraw' ? 'withdrawn' : 'active')) throw new HttpError(403, 'Declaración no permitida.');
         if (command.action === 'withdraw' && (!current.policy || current.policy.version !== 2 || JSON.stringify(command.target.declaration) !== JSON.stringify(current.policy.declaration))) throw conflict();
@@ -134,6 +139,7 @@ export async function resumeBookingPolicyTransition(actor: ChatActor, businessId
     const receiptRef = db.collection('serverSettings').doc(bookingPolicyOperationKey(businessId, actor.uid, requestId)), saved = await tx.get(receiptRef);
     const receipt = bookingPolicyOperationSchema.safeParse(saved.data());
     if (!receipt.success || receipt.data.businessId !== businessId || receipt.data.actorUid !== actor.uid || receipt.data.requestId !== requestId) throw conflict();
+    if (['declare', 'withdraw'].includes(receipt.data.action) && actor.uid !== business.data()?.ownerUid) throw new HttpError(403, 'Esta operación requiere al dueño vigente.');
     const policy = current.policy;
     if (receipt.data.phase === 'applied') return { outcome: 'applied' as const, capability: current.capability, operation: receipt.data };
     if (!policy || policy.version !== 2 || policy.status !== 'transitioning' || policy.revision !== receipt.data.targetRevision || policy.transition?.requestId !== requestId || policy.updatedBy !== actor.uid) throw conflict();

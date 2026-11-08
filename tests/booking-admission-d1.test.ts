@@ -6,6 +6,7 @@ import { privateBusinessDraft } from '@/lib/server/businesses';
 import { bookingDataPolicyKey } from '@/lib/server/booking-data-policy';
 import { assertBookingAdmission } from '@/lib/server/booking-admission';
 import type { DataReadResult, DataCommitResult } from '../shared/data-protocol';
+import { registerBookingPolicyCommandCases } from './booking-policy-commands-contract';
 describe('booking admission real D1', () => {
   let runtime: Awaited<ReturnType<typeof createDataTestRuntime>>;
   beforeEach(async () => { runtime = await createDataTestRuntime(); }, 30000);
@@ -16,6 +17,7 @@ describe('booking admission real D1', () => {
     return data;
   });
   registerBookingAdmissionCases(() => ({ db: connect(), second: connect() }));
+  registerBookingPolicyCommandCases(() => ({ db: connect(), second: connect() }));
   it('CAS retries admission after an owner change and aborts the dependent write', async () => {
     const db = connect(), second = connect(), business = { ...privateBusinessDraft({ uid: 'demo-owner' }, 1), id: admissionPolicy.businessId };
     await db.collection('businesses').doc(business.id).set(business);

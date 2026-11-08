@@ -3,9 +3,12 @@ import { GET, PATCH } from '@/app/api/admin/booking-data-policy/route';
 import { GET as capability } from '@/app/api/businesses/[id]/booking-policy/route';
 import { privateBusinessDraft } from '@/lib/server/businesses';
 import { memoryFirestore } from './memoryFirestore';
-const boundary = vi.hoisted(() => ({ db: null as unknown, uid: 'demo-admin' }));
+import { ensureBookingAdmissionProtocol, bookingDispatchHeadKey } from '@/lib/server/booking-admission';
+import { bookingDataPolicyKey, saveBookingDataPolicy } from '@/lib/server/booking-data-policy';
+const boundary = vi.hoisted(() => ({ db: null as unknown, uid: 'demo-admin', release: 'prepare' }));
 vi.mock('@/lib/firebase/admin', () => ({ getAdminDb: () => boundary.db, getAdminAuth: () => ({ verifyIdToken: async () => ({ uid: boundary.uid }) }) }));
-afterEach(() => vi.unstubAllEnvs());
+vi.mock('@/lib/booking-admission-release', async importOriginal => ({ ...await importOriginal<object>(), get BOOKING_ADMISSION_RELEASE() { return boundary.release; } }));
+afterEach(() => { vi.unstubAllEnvs(); boundary.release = 'prepare'; });
 it('authenticates admin in Next and rejects query variants and oversized or extra input', async () => {
   vi.stubEnv('SUPERADMIN_UID', 'demo-admin'); boundary.db = memoryFirestore({ 'businesses/demo': { ...privateBusinessDraft({ uid: 'demo-owner' }, 0), id: 'demo' } }).db;
   const request = (query: string, auth = true) => new Request(`http://localhost/api/admin/booking-data-policy${query}`, { headers: auth ? { authorization: 'Bearer synthetic' } : {} });
@@ -22,4 +25,24 @@ it('authenticates admin in Next and rejects query variants and oversized or extr
   const response = await capability(new Request('http://localhost/api/businesses/demo/booking-policy', { headers: { authorization: 'Bearer synthetic' } }), { params: Promise.resolve({ id: 'demo' }) });
   expect(response.status).toBe(200); expect(await response.json()).toEqual({ configured: true, revision: 1, dataMode: 'general', representedMinorsEnabled: false, admission: 'active', canStartBooking: true, canUseInference: true });
   expect(response.headers.get('Cache-Control')).toBe('no-store');
+});
+
+it('enforce admin API requires idempotent commands and returns pending until dispatch resolution', async () => {
+  vi.stubEnv('SUPERADMIN_UID', 'demo-admin'); boundary.uid = 'demo-admin'; boundary.release = 'enforce';
+  const { db } = memoryFirestore({ 'businesses/demo': { ...privateBusinessDraft({ uid: 'demo-owner' }, 0), id: 'demo' } }); boundary.db = db;
+  await ensureBookingAdmissionProtocol(db, 'a'.repeat(40), 'enforce');
+  const input = { businessId: 'demo', expectedRevision: 0, dataMode: 'general', representedMinorsEnabled: false, reason: 'PRIVATE ADMIN NOTE' } as const;
+  const patch = (body: object) => PATCH(new Request('http://localhost/api/admin/booking-data-policy', { method: 'PATCH', headers: { authorization: 'Bearer synthetic', 'content-type': 'application/json' }, body: JSON.stringify(body) }));
+  expect((await patch(input)).status).toBe(400);
+  const classified = await patch({ ...input, action: 'classify', requestId: 'demo-classify' });
+  expect(classified.status).toBe(200); expect(await classified.json()).toMatchObject({ outcome: 'applied', policy: { version: 2 }, capability: { revision: 1, admission: 'active' } });
+  await expect(saveBookingDataPolicy({ uid: 'demo-admin' }, { ...input, expectedRevision: 1 }, db)).rejects.toMatchObject({ code: 'BOOKING_POLICY_UNAVAILABLE' });
+  await db.collection('serverSettings').doc(bookingDispatchHeadKey('demo')).set({ version: 1, businessId: 'demo', revision: 1, refs: [{ kind: 'whatsapp', id: 'demo-outbox', policyRevision: 1, startedAt: 1 }] });
+  const response = await patch({ ...input, expectedRevision: 1, action: 'suspend', requestId: 'demo-suspend' });
+  expect(response.status).toBe(202); expect(response.headers.get('Cache-Control')).toBe('no-store');
+  expect(await response.json()).toMatchObject({ outcome: 'pending', capability: { admission: 'transitioning', revision: 2 } });
+  expect((await db.collection('serverSettings').doc(bookingDataPolicyKey('demo')).get()).data()?.status).toBe('transitioning');
+  boundary.uid = 'demo-client';
+  const publicView = await capability(new Request('http://localhost/api/businesses/demo/booking-policy', { headers: { authorization: 'Bearer synthetic' } }), { params: Promise.resolve({ id: 'demo' }) });
+  expect(publicView.status).toBe(200); expect(JSON.stringify(await publicView.json())).not.toMatch(/PRIVATE|actorUid|requestId|origin|declaration/);
 });

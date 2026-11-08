@@ -5,7 +5,7 @@ import { packagePagesGateway } from './package-pages-gateway.mjs';
 // Explicit alternate artifact: Pages gateway + static fallback. Building this
 // never changes the existing Pages project, DNS, VPS, or runtime secrets.
 const root = fileURLToPath(new URL('../', import.meta.url));
-const env = { ...process.env, NEXT_TELEMETRY_DISABLED: '1', SARIN_PUBLIC_APP_URL: 'https://sarinbotsaas.pages.dev' };
+const env = { ...process.env, NEXT_TELEMETRY_DISABLED: '1', SARIN_PUBLIC_APP_URL: 'https://agendia-app.pages.dev' };
 async function run(script) {
   const child = spawn(process.execPath, [script], { cwd: root, env, stdio: 'inherit', windowsHide: true });
   const code = await new Promise((resolve, reject) => {

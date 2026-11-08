@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowUpRight, Bot, CalendarDays, CreditCard, LayoutDashboard, Menu, QrCode, Settings2, ShieldCheck, Sparkles, Store, type LucideIcon } from "lucide-react";
+import { Bot, CalendarDays, CreditCard, LayoutDashboard, Menu, QrCode, Settings2, ShieldCheck, Sparkles, Store, type LucideIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { type WorkspaceNavItem } from "@/lib/admin-navigation";
 
@@ -47,7 +47,6 @@ export function WorkspaceNavigation({ context, items, activeId, isSuperadmin }: 
         })}
         {context === 'platform' && isSuperadmin && <Link href="/dashboard" onClick={select} className="mt-2 flex min-h-11 items-center gap-3 rounded-[10px] px-3 py-3 text-[13px] text-sarin-muted hover:text-sarin-blue focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sarin-blue"><CalendarDays aria-hidden="true" className="h-[18px] w-[18px] shrink-0" />Volver a mi negocio</Link>}
       </nav>
-      {context === 'business' && isSuperadmin && <Link href="/admin" onClick={select} className="mx-5 mb-3 flex min-h-11 items-center gap-2 rounded-[10px] text-xs text-sarin-muted hover:text-sarin-blue focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sarin-blue lg:mx-7"><ShieldCheck aria-hidden="true" className="h-4 w-4 shrink-0" />Administración de Sarin<ArrowUpRight aria-hidden="true" className="ml-auto h-3.5 w-3.5 shrink-0" /></Link>}
     </div>
   );
 }

@@ -1,5 +1,7 @@
 {
-  "name": "sarin-bot-mvp",
+  "name": "agendia",
+  "homepage": "https://agendia-app.pages.dev",
+  "repository": { "type": "git", "url": "https://github.com/andresleosan/AgendIA.git" },
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@11.23.0",
@@ -8,6 +10,7 @@
     "dev:local": "node scripts/dev-local.mjs",
     "doctor": "node --env-file-if-exists=.env.local scripts/doctor.mjs",
     "build": "next build",
+    "deploy:agendia": "node scripts/deploy-agendia.mjs",
     "build:landing": "node scripts/build-landing.mjs",
     "build:pages": "node scripts/build-pages.mjs",
     "check:landing": "node scripts/verify-landing.mjs",

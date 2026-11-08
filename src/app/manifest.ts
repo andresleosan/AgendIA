@@ -2,13 +2,13 @@ import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'SarinBot', short_name: 'SarinBot', lang: 'es',
-    description: 'Agenda de negocios y asistente personal privado.',
+    name: 'AgendIA', short_name: 'AgendIA', lang: 'es',
+    description: 'Tus clientes agendan, la IA trabaja. Asistente virtual: Sarin Bot.',
     start_url: '/dashboard', scope: '/', display: 'standalone',
-    background_color: '#020617', theme_color: '#020617',
+    background_color: '#f7f9ff', theme_color: '#f7f9ff',
     icons: [
-      { src: '/brand/sarin-face-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-      { src: '/brand/sarin-face-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: '/brand/agendia-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/brand/agendia-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
     ],
   };
 }

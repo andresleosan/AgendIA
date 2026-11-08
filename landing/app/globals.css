@@ -1,6 +1,7 @@
 @import '../../src/app/globals.css';
 @source '../../src/components/marketing-home.tsx';
 @source '../../src/components/sarin-brand.tsx';
+@source '../../src/components/agendia-brand.tsx';
 @source './';
 
 html { color-scheme: light; }

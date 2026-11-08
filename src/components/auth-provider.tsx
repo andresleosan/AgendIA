@@ -1,6 +1,6 @@
 "use client";
 
-import { SarinBrand } from "@/components/sarin-brand";
+import { AgendiaBrand, BrandCredits } from "@/components/agendia-brand";
 import { AccountConsentProvider, PreauthorizationChoices } from '@/components/consent-panel';
 import type { ConsentStatus } from '@/lib/legal';
 import { createContext, useCallback, useContext, useEffect, useState, useRef, type ReactNode } from "react";
@@ -180,7 +180,7 @@ export function AuthGate({
     return (
       <main className="sarin-backdrop grid min-h-screen place-items-center px-5 py-12">
         <section className="sarin-surface w-full max-w-md space-y-6 rounded-2xl p-7 shadow-[0_16px_48px_#233e7c09] sm:p-9">
-          <a href="/" aria-label="SarinBot, inicio" className="mb-3 inline-block"><SarinBrand /></a>
+          <a href="/" aria-label="AgendIA, inicio" className="mb-3 inline-block"><AgendiaBrand /></a>
           <div><p className="sarin-eyebrow mb-3 text-sarin-blue">Tu espacio está aquí</p><h1 className="text-3xl font-semibold leading-tight tracking-[-0.04em] text-sarin-ink">Inicia sesión para continuar</h1></div>
           <p className="text-sm leading-7 text-sarin-muted">
             {localEmulators
@@ -219,6 +219,7 @@ export function AuthGate({
             <a href="/ayuda" className="inline-flex min-h-11 items-center underline underline-offset-4">Ayuda</a>
           </nav>
           <p className="border-t border-sarin-line pt-5 text-xs leading-6 text-sarin-muted">Tu agenda, tus servicios y tu forma de atender. Todo en un mismo espacio.</p>
+          <BrandCredits />
         </section>
       </main>
     );

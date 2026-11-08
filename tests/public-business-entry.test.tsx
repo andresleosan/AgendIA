@@ -50,7 +50,9 @@ it('keeps the existing authenticated gate and returns to the profile after sign 
   await act(async () => renderer.root.findAllByType('button').find(button => text(button) === 'Reservar')!.props.onClick());
   state.user = { uid: 'client' };
   await act(async () => renderer.update(createElement(Suspense, { fallback: null }, createElement(ClientPage, { params: Promise.resolve({ slug: 'shop' }) }))));
-  expect(text(renderer.root)).toBe('Acceso con Google');
+  expect(text(renderer.root)).toContain('Acceso con Google');
+  expect(text(renderer.root)).not.toContain('Corte clásico');
+  expect(text(renderer.root.findByType('footer'))).toContain('Asistente virtual: Sarin Bot');
   state.user = null;
   await act(async () => renderer.update(createElement(Suspense, { fallback: null }, createElement(ClientPage, { params: Promise.resolve({ slug: 'shop' }) }))));
   expect(text(renderer.root)).toContain('Corte clásico');

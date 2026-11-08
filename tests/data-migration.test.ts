@@ -4,6 +4,7 @@ import { seedFactualFaqScenario, factualFaqNow, syntheticFaqItems } from './busi
 import { saveOwnerFactualFaq } from '@/lib/server/business-factual-faq';
 import { describe, expect, it } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
+import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -12,7 +13,7 @@ import {
   prepareMigration, privateDirectory, restoreFirestoreWrites, sha256, verifyImportedRows, verifyMigration, normalizeImportedRow, encodeFirestoreValue,
   readPreparedBundle, resolveBackupDirectory, writePreparedBundle, writeSourceBackup,
 } from '../scripts/lib/data-migration.mjs';
-import { firestoreRequester, googleCloudSdkCommand, parseArguments, queryD1 } from '../scripts/cloudflare-data-migration.mjs';
+import { firestoreRequester, googleCloudSdkCommand, parseArguments } from '../scripts/cloudflare-data-migration.mjs';
 import { createDataTestRuntime } from '../cloudflare/tests/data-runtime.mjs';
 import { verifyD1Backup } from '../scripts/verify-d1-backup.mjs';
 import { classifyBackupDocument } from '../scripts/lib/recovery-backup.mjs';
@@ -503,11 +504,22 @@ describe('Firestore migration artifacts', () => {
     expect(() => googleCloudSdkCommand(sdk, () => false)).toThrow('MIGRATION_GCLOUD_SDK_MISSING');
   });
 
-  it('reads machine JSON from the installed Wrangler CLI without suppressing stdout', async () => {
+  it('reads machine JSON from installed Wrangler with an isolated local D1 fixture', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'sarin-migration-fixture-'));
     try {
       await privateDirectory(directory);
-      expect(queryD1(directory, { '--database': 'sarin-bot-data' }, 'SELECT 1 AS synthetic;')).toEqual([{ synthetic: 1 }]);
+      const config = join(directory, 'wrangler.json');
+      await writeFile(config, JSON.stringify({
+        name: 'agendia-migration-fixture', compatibility_date: '2026-10-13',
+        d1_databases: [{ binding: 'DB', database_name: 'demo-agendia-migration-fixture', database_id: '00000000-0000-0000-0000-000000000001' }],
+      }));
+      const output = execFileSync(process.execPath, [resolve('cloudflare/node_modules/wrangler/bin/wrangler.js'),
+        'd1', 'execute', 'demo-agendia-migration-fixture', '--config', config, '--command', 'SELECT 1 AS synthetic;',
+        '--local', '--persist-to', join(directory, 'state'), '--json', '--yes'], {
+        cwd: directory, windowsHide: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, WRANGLER_SEND_METRICS: 'false', WRANGLER_LOG: 'log', WRANGLER_LOG_SANITIZE: 'true', WRANGLER_LOG_PATH: join(directory, 'wrangler-logs') },
+      });
+      expect(JSON.parse(output)).toMatchObject([{ success: true, results: [{ synthetic: 1 }] }]);
     } finally {
       expect(dirname(resolve(directory))).toBe(resolve(tmpdir()));
       expect(basename(directory).startsWith('sarin-migration-fixture-')).toBe(true);

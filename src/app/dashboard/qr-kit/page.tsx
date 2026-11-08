@@ -17,7 +17,7 @@ type Kit = { business: Business; bookingUrl: string };
 type Assets = Awaited<ReturnType<typeof buildBookingCardAssets>>;
 function QRKit({ uid }: { uid: string }) {
   const result = useApiPoll<Kit>(uid, async signal => {
-    const value = await apiFetch<Kit>('/api/businesses/qr-kit', { signal });
+    const value = await apiFetch<Kit>('/api/businesses/qr-kit?application=agendia', { signal });
     if (value.business.ownerUid !== uid) throw new Error('No tienes acceso a este negocio.');
     return value;
   });

@@ -9,8 +9,11 @@ const html = await readFile(join(output, 'index.html'), 'utf8');
 const links = [...html.matchAll(/href="([^"]+)"/g)].map((match) => match[1]);
 const anchors = [...html.matchAll(/<a\b[^>]*href="([^"]+)"/g)].map((match) => match[1]);
 const ids = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]));
-const appOrigin = 'https://sarinbotsaas.pages.dev';
+const appOrigin = 'https://agendia-app.pages.dev';
 const applicationLinks = [];
+const visibleText = html.replace(/<[^>]*>/g, '');
+assert.ok(visibleText.includes('Tus clientes agendan, la IA trabaja') && html.includes('aria-label="AgendIA"'), 'AgendIA identity and approved slogan must be visible.');
+assert.ok(visibleText.includes('Asistente virtual: Sarin Bot') && visibleText.includes('Desarrollado por ALS Dev Studio'), 'Assistant and developer credits must remain visible.');
 assert.ok(!/próximamente|aún no están disponibles/i.test(html), 'The product page must not retain the former launch notice.');
 assert.ok(ids.has('planes') && ids.has('empezar'), 'Plans and access sections must be present.');
 assert.ok(/data-offer-state="(?:loading|unavailable)"/.test(html), 'Variable prices require an accessible runtime offer state.');
@@ -38,7 +41,7 @@ if (applicationLinks.length) {
   assert.ok(anchors.includes('#planes') && anchors.includes('#empezar'), 'Coordinated access requires useful local actions.');
 }
 assert.ok(!html.includes('/_next/image?'), 'The export must not require the Next image server.');
-const icons = ['sarin-face.ico', 'sarin-face-32.png', 'sarin-face-48.png', 'sarin-face-apple.png'];
+const icons = ['brand/agendia-icon.svg', 'brand/agendia-192.png', 'brand/agendia-512.png'];
 for (const file of ['404.html', '_headers', 'robots.txt', 'sitemap.xml', 'brand/sarin-welcome.png', 'brand/sarin-flight.png', 'brand/sarin-face-mark.png', 'favicon.ico', ...icons]) await stat(join(output, file));
 for (const icon of icons) {
   assert.ok(links.some((link) => link.split(/[?#]/)[0] === '/' + icon), `Missing icon metadata: ${icon}`);

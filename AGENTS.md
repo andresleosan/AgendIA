@@ -1,47 +1,18 @@
-# Repository Guidelines
+# AgendIA repository guidelines
 
-## Project Structure & Module Organization
+AgendIA is the independent commercial appointment UI. Read `DESIGN.md` before changing interfaces. Preserve Agenda clara, the approved AgendIA name and slogan, Sarin Bot assistant attribution, and ALS Development Studio credits.
 
-- `src/app/`: Next.js App Router pages and API routes.
-- `src/components/`, `src/hooks/`, `src/types/`: shared UI, hooks, and contracts.
-- `src/lib/`: Firebase Auth integration, commercial business logic, D1/R2 storage, and Sarin inference/queue.
-- `tests/`: application tests; `scripts/`: local development and validation runners.
-- `public/`: assets and fonts; `docs/`: design decisions and QA evidence.
-- `landing/`: separate static marketing site; `cloudflare/`: application hosting; `deploy/`: VPS, Caddy, and Mac/Ollama templates.
-
-## Build, Test, and Development Commands
-
-Use Node 24 and pnpm 11.23.0. Run from the repository root; preserve the shared `pnpm-lock.yaml`.
-
-- `pnpm install --frozen-lockfile`: install locked dependencies.
-- `pnpm run dev`: start Next with configured Firebase.
-- `pnpm run dev:local`: start Next and isolated Firebase emulators.
-- `pnpm run typecheck`: check TypeScript; `pnpm run lint` currently runs the same check.
-- `pnpm test`: run application tests.
-- `pnpm run build` / `pnpm start`: build / serve the application.
-- `pnpm run build:landing` and `pnpm run check:landing`: export and validate the marketing site.
-- `pnpm --filter sarin-cloudflare-host run check`: test, typecheck, and dry-run the Worker.
-
-## Coding Style & Naming Conventions
-
-Use strict TypeScript, two-space indentation, and semicolons; match surrounding quote style. Use PascalCase component exports, camelCase functions, and `useX` hooks. Follow neighboring filenames, such as `app-shell.tsx` and `useBusiness.ts`. Prefer `@/` imports for `src/`. No dedicated formatter or ESLint configuration is present.
-
-## Testing Guidelines
-
-Use Vitest with `tests/*.test.ts(x)`; Cloudflare uses Node's test runner with `cloudflare/tests/*.test.mjs`. Cover changed behavior, authorization boundaries, and failure cases. No numerical coverage threshold is configured.
-
-Firebase tests require Java 21+: run `pnpm run test:rules`. With `dev:local` running, use `pnpm run test:local` and `pnpm run test:journey`. Use synthetic data and `demo-*` projects.
-
-## Commit & Pull Request Guidelines
-
-Follow existing English imperative subjects: `feat:`, `fix:`, `style:`, `chore:`, or `docs:`. Keep commits focused. PRs should explain behavior changes, link relevant issues, report validation, and include screenshots for UI changes. Review applicable checks in `.github/workflows/verify.yml`.
-
-## Security & Architecture
-
-Keep secrets and private exports outside Git. Avoid logging conversation bodies. The active product is the commercial appointment service; personal chat and Vault are retired. Removing the module must not silently purge browser data from earlier versions. Run one application replica: the inference queue is process-local. Remote Ollama requires HTTPS and Cloudflare Access Service Auth.
-
-Use only `alsdevstudio.com` for Sarin's engine hostname. Never use `bptjersey.com`, including temporary tests.
-
-## Agent Instructions
-
-When requested to run `/graphify`, read and follow `~/.codex/skills/graphify/SKILL.md` before other work.
+- Use Node 24.22.1 and pnpm 11.23.0; preserve the existing lockfile and pinned dependencies.
+- `src/app/`, `src/components/`, `src/hooks/` and `src/lib/client/` contain the UI. `pages-gateway/worker.mjs` is the public trust boundary.
+- Deploy only Pages `agendia-app` and Worker/Container `agendia-web`. The API binding may reference existing `sarin-bot-app`; no deployment command here may modify it.
+- The API, D1/R2, Firebase Admin, inference queue, provider settings, WhatsApp and webhooks remain in Sarin Hub. Never create a second commercial database, inference queue or WhatsApp worker.
+- The AgendIA image must exclude `src/app/api`, `src/app/admin` and instrumentation. Start only `node server.js`; never use the inherited Sarin container startup or WIF helpers.
+- Inherited server sources and tests are contract references, not a deployment target. Do not reactivate their routes to make local tests or development convenient.
+- The sole Fresha implementation progress authority is `E:/Proyectos/Sarin Bot/docs/implementation/fresha/tasks.json`. Do not copy it or create a second mutable progress file in AgendIA; inherited implementation documents are reference only.
+- Keep API authentication and the real Origin header. Reject administrative/internal/webhook/issuer paths, encoded bypasses and arbitrary redirects at the gateway and UI host.
+- No Admin credentials, tokens, private exports or runtime secrets in Git, build arguments or frontend bundles. Only the four reviewed public Firebase values enter the UI build.
+- Use strict TypeScript, two spaces and semicolons, following adjacent quote style.
+- Validate with `pnpm run typecheck`, `pnpm test`, gateway tests, `pnpm --filter agendia-cloudflare-host run check`, `pnpm run build:pages`, and a real UI-only Docker build/smoke when changing infrastructure.
+- `scripts/deploy-agendia.mjs` without arguments validates scope only. Deployment, remote configuration and real sends must stay within explicit session authorization; prepare concrete changes and checks first.
+- Preserve old browser data; removing a surface never authorizes purging previous personal chat or Vault data.
+- Sarin engine hostnames are only under `alsdevstudio.com`. Never use the other projects' domains.

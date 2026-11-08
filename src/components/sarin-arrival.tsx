@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useRef, useState, type AnimationEvent } from "react";
+import { BrandCredits } from "./agendia-brand";
 
 export function SarinArrival({ comingSoon = false }: { comingSoon?: boolean }) {
   const sceneRef = useRef<HTMLDivElement>(null);
@@ -11,7 +12,7 @@ export function SarinArrival({ comingSoon = false }: { comingSoon?: boolean }) {
   const [pageVisible, setPageVisible] = useState(true);
   const [messageIndex, setMessageIndex] = useState(0);
   const messages = [
-    { title: "¡Hola, soy SarinBot!", text: comingSoon ? "Pronto te ayudaré a organizar las citas de tu negocio." : "Te ayudo a organizar las citas de tu negocio." },
+    { title: "¡Hola, soy Sarin Bot!", text: comingSoon ? "Pronto te ayudaré a organizar tus citas en AgendIA." : "Te ayudo a organizar tus citas en AgendIA." },
     { title: "Tu negocio, a tu manera.", text: comingSoon ? "Configurarás tus servicios, profesionales y horarios." : "Configura tus servicios, profesionales y horarios." },
     { title: "Un enlace para tus clientes.", text: comingSoon ? "Compartirás tu espacio por mensaje o con un código QR." : "Comparte tu espacio por mensaje o con un código QR." },
     { title: "De la conversación a la cita.", text: comingSoon ? "Tus clientes podrán consultar servicios y horarios disponibles." : "Tus clientes consultan servicios y horarios disponibles." },
@@ -64,7 +65,7 @@ export function SarinArrival({ comingSoon = false }: { comingSoon?: boolean }) {
         <Image src="/brand/sarin-flight.png" alt="" width={320} height={383} loading="eager" className="sarin-arrival-flight" />
         <Image src="/brand/sarin-welcome.png" alt="" width={320} height={480} loading="eager" className="sarin-arrival-landed" />
       </div>
-      <div className="sarin-arrival-greeting"><p><strong>{message.title}</strong><span>{message.text}</span></p></div>
+      <div className="sarin-arrival-greeting"><div><p><strong>{message.title}</strong><span>{message.text}</span></p><BrandCredits /></div></div>
     </div>
   </div>;
 }

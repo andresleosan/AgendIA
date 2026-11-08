@@ -3,6 +3,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState, type FormEvent 
 import Link from 'next/link';
 import { Send } from 'lucide-react';
 import { SarinMark } from '@/components/sarin-brand';
+import { AgendiaBrand, BrandCredits } from '@/components/agendia-brand';
 import { BusinessContactLinks } from '@/components/business-contact-links';
 import { BusinessFactualFaqPanel } from '@/components/business-factual-faq-panel';
 import { ResponseQuotaNotice } from '@/components/response-quota';
@@ -218,5 +219,5 @@ function BusinessEntry({ slug }: { slug: string }) {
 
 export default function ClientIslandPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = use(params);
-  return <BusinessEntry key={slug} slug={slug} />;
+  return <><BusinessEntry key={slug} slug={slug} /><footer className="mx-auto flex max-w-2xl flex-wrap items-center justify-between gap-4 border-t border-sarin-line px-5 py-6"><Link href="/" aria-label="AgendIA, inicio"><AgendiaBrand compact /></Link><BrandCredits /></footer></>;
 }

@@ -9,7 +9,7 @@ vi.mock('@/lib/client/api', () => ({ apiFetch: state.api, errorMessage: (error: 
 vi.mock('@/lib/client/booking-card-assets', () => ({ buildBookingCardAssets: state.build }));
 vi.mock('next/link', () => ({ default: ({ href, children }: { href: string; children: ReactNode }) => createElement('a', { href }, children) }));
 import QRKitPage from '@/app/dashboard/qr-kit/page';
-const data = { bookingUrl: 'https://sarinbotsaas.pages.dev/b/negocio-sintetico', business: { id: 'business', ownerUid: 'owner', slug: 'negocio-sintetico', name: 'Negocio sintético', phoneWhatsApp: '573001234567', socialLinks: [], sarinConfig: { onboardingCompleted: true } } };
+const data = { bookingUrl: 'https://agendia-app.pages.dev/b/negocio-sintetico', business: { id: 'business', ownerUid: 'owner', slug: 'negocio-sintetico', name: 'Negocio sintético', phoneWhatsApp: '573001234567', socialLinks: [], sarinConfig: { onboardingCompleted: true } } };
 const assets = { png: new Blob(['png']), pdf: new Blob(['pdf']), qrSvg: new Blob(['svg']) };
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 describe('selected printable kit', () => {
@@ -21,7 +21,7 @@ describe('selected printable kit', () => {
   afterEach(async () => { await act(async () => renderer?.unmount()); vi.unstubAllGlobals(); vi.useRealTimers(); });
   it('kit_uses_selected_template_without_style_selector and exports only server-supplied details', async () => {
     await mount();
-    expect(state.api.mock.calls[0][0]).toBe('/api/businesses/qr-kit');
+    expect(state.api.mock.calls[0][0]).toBe('/api/businesses/qr-kit?application=agendia');
     expect(renderer.root.findAllByType('select')).toHaveLength(0);
     const qrs = renderer.root.findAllByType(QRCodeSVG);
     expect(qrs).toHaveLength(2);

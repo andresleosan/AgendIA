@@ -1,14 +1,13 @@
 {
-  "name": "sarin-cloudflare-host",
+  "name": "agendia-cloudflare-host",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "engines": { "node": ">=24.22.1 <25" },
   "scripts": {
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --test tests/agendia-*.test.mjs",
     "typecheck": "tsc --noEmit",
-    "types": "wrangler types --config wrangler.jsonc --env-interface CloudflareBindings worker-configuration.d.ts",
-    "configure:build": "node scripts/configure-build.mjs",
+    "types": "wrangler types --config wrangler.jsonc --env-interface AgendiaBindings agendia-configuration.d.ts",
     "dry-run": "wrangler deploy --config wrangler.jsonc --dry-run --outdir .wrangler/dry-run",
     "dry-run:worker": "wrangler deploy --config wrangler.jsonc --dry-run --containers-rollout=none --outdir .wrangler/dry-run",
     "check": "pnpm test && pnpm run typecheck && pnpm run dry-run:worker"

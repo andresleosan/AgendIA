@@ -13,7 +13,7 @@ vi.mock('@/lib/sarin-contact', () => ({
 describe('public SarinBot support contact', () => {
   it.each([false, true])('offers support with safe external attributes on marketing, standalone=%s', standalone => {
     const html = renderToStaticMarkup(createElement(MarketingHome, { standalone }));
-    const anchor = [...html.matchAll(/<a\b[^>]*>[\s\S]*?<\/a>/g)].map(match => match[0]).find(value => value.includes('Contactar a SarinBot por WhatsApp')) ?? '';
+    const anchor = [...html.matchAll(/<a\b[^>]*>[\s\S]*?<\/a>/g)].map(match => match[0]).find(value => value.includes('Contactar a Sarin Bot por WhatsApp')) ?? '';
     expect(anchor).toContain('href="https://wa.me/12345678"');
     expect(anchor).toContain('target="_blank"');
     expect(anchor).toContain('rel="noopener noreferrer"');

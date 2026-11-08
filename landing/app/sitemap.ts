@@ -3,5 +3,5 @@ import type { MetadataRoute } from "next";
 export const dynamic = "force-static";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  return [{ url: "https://sarinbotsaas.pages.dev/", changeFrequency: "monthly", priority: 1 }];
+  return [{ url: "https://agendia-app.pages.dev/", changeFrequency: "monthly", priority: 1 }];
 }

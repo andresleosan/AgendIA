@@ -1,18 +1,77 @@
-// Pages advanced mode: no application runtime, credentials or request state at module scope.
-const PUBLIC_ORIGIN = 'https://sarinbotsaas.pages.dev';
-const PUBLIC_HOSTNAME = 'sarinbotsaas.pages.dev';
-const HEADER_TIMEOUT_MS = 660_000;
-const BACKEND_KEYS = ['SARIN_APP_ORIGIN', 'SARIN_APP_ACCESS_CLIENT_ID', 'SARIN_APP_ACCESS_CLIENT_SECRET'];
-const LANDING_FILES = new Set([
-  '/', '/index.html', '/index.txt', '/__next.__PAGE__.txt', '/__next._tree.txt', '/__next._full.txt',
-  '/robots.txt', '/sitemap.xml', '/favicon.ico', '/favicon.png', '/apple-touch-icon.png',
-  '/sarin-face.ico', '/sarin-face-32.png', '/sarin-face-48.png', '/sarin-face-apple.png',
-  '/brand/sarin-welcome.png', '/brand/sarin-flight.png', '/brand/sarin-face-mark.png',
-]);
-const ACCESS_COOKIE = /^CF_(?:Authorization|AppSession|Binding)$/i;
-const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'te', 'trailer', 'upgrade', 'proxy-connection']);
+export const PUBLIC_ORIGIN = 'https://agendia-app.pages.dev';
+const PUBLIC_HOST = 'agendia-app.pages.dev';
+const ID = '[A-Za-z0-9_-]{1,128}';
+const SLUG = '[a-z0-9]+(?:-[a-z0-9]+)*';
+const business = '/api/businesses/' + ID;
+const appointment = business + '/appointments/' + ID;
+const rules = [
+  ['GET', '/api/session'],
+  ['GET POST', '/api/(?:consent(?:/preauthorize)?|booking-subject-consent|businesses|billing)'],
+  ['POST', '/api/(?:businesses/logo|invitations/redeem|sarin/chat|team/requests)'],
+  ['GET', '/api/(?:businesses/qr-kit|sarin/health|public/commercial-offer|team/memberships)'],
+  ['GET POST DELETE', '/api/platform-whatsapp/link'],
+  ['GET POST', '/api/platform-support/conversations'],
+  ['GET POST', '/api/platform-support/conversations/' + ID + '/messages'],
+  ['GET', '/api/public/businesses/' + SLUG + '(?:/logo/[a-f0-9]{64})?'],
+  ['DELETE', '/api/team/memberships/' + ID],
+  ['GET', '/api/team/businesses/' + ID + '/agenda'],
+  ['GET POST PATCH', business + '/appointments'],
+  ['GET', appointment],
+  ['GET PATCH', appointment + '/attendance'],
+  ['GET POST', appointment + '/client-record'],
+  ['PATCH', appointment + '/representation-review'],
+  ['GET', appointment + '/owner-reschedule'],
+  ['POST', appointment + '/owner-reschedule/(?:availability|proposals)'],
+  ['GET', business + '/(?:booking-policy|factual-faq(?:/' + ID + ')?|operation-summary|reminders|team|waitlist/offer)'],
+  ['GET PATCH', business + '/(?:booking-declaration|client-policy)'],
+  ['GET PUT', business + '/(?:resource-schedules|factual-faq-settings)'],
+  ['POST', business + '/(?:appointments/query|availability(?:/next)?|booking-proposals|reschedule/(?:availability|proposals)|reminders/seen|waitlist/cancel)'],
+  ['PATCH', business + '/(?:reminders/preference|team/' + ID + ')'],
+  ['POST', business + '/booking-proposals/' + ID + '/confirm'],
+  ['GET', business + '/owner-reschedule-proposals/' + ID],
+  ['POST', business + '/owner-reschedule-proposals/' + ID + '/confirm'],
+  ['GET POST', business + '/waitlist'],
+  ['GET', business + '/waitlist/offers/' + ID],
+  ['POST', business + '/waitlist/offers/' + ID + '/(?:proposal|confirm|decline|close-expired)'],
+  ['POST', business + '/owner-waitlist/(?:query|offers/query)'],
+  ['GET', business + '/owner-waitlist/' + ID + '(?:/offer-context)?'],
+  ['GET PATCH', business + '/owner-waitlist/' + ID + '/review'],
+  ['POST', business + '/owner-waitlist/' + ID + '/offers'],
+  ['GET', business + '/owner-waitlist/offers/' + ID],
+  ['POST', business + '/owner-waitlist/offers/' + ID + '/(?:withdraw|close-expired)'],
+].map(([methods, pattern]) => ({ methods: methods.split(' '), path: new RegExp('^' + pattern + '$') }));
 
-function responseHeaders(headers = new Headers()) {
+function safePath(path) {
+  return !/[%\\\x00-\x20\x7f]/.test(path) && !path.includes('//') && !path.split('/').some(part => part === '.' || part === '..');
+}
+
+export function isUiRequest(request) {
+  const url = new URL(request.url), path = url.pathname;
+  if (!['GET', 'HEAD'].includes(request.method) || request.headers.has('Next-Action')) return false;
+  if (path.startsWith('/_next/static/')) {
+    let decoded;
+    try { decoded = decodeURIComponent(path); } catch { return false; }
+    return safePath(decoded) && /^\/_next\/static\/[A-Za-z0-9_./@\[\]()-]+\.(?:js|css|woff2?|ttf|png|jpe?g|webp|svg|ico|txt)$/.test(decoded);
+  }
+  if (!safePath(path)) return false;
+  if (path === '/_next/image') {
+    const sources = url.searchParams.getAll('url');
+    return sources.length === 1 && safePath(sources[0]) && /^\/brand\/[A-Za-z0-9_-]+\.(?:png|jpe?g|webp|svg)$/.test(sources[0]);
+  }
+  return /^\/(?:dashboard(?:\/(?:onboarding|billing|faq|qr-kit|reports|schedule|team|waitlist))?|team(?:\/[A-Za-z0-9_-]{1,128})?|b\/[a-z0-9]+(?:-[a-z0-9]+)*|soporte|privacidad|terminos|ayuda)?\/?$/.test(path)
+    || /^\/(?:_next\/static|brand|fonts)\/[A-Za-z0-9_./-]+\.(?:js|css|woff2?|ttf|png|jpe?g|webp|svg|ico|txt)$/.test(path)
+    || /^\/(?:favicon\.(?:ico|png)|apple-touch-icon\.png|(?:sarin|agendia)-[a-z0-9-]+\.(?:svg|png|ico)|robots\.txt|sitemap\.xml|manifest\.webmanifest)$/.test(path);
+}
+
+export function isCommercialApiRequest(request) {
+  const url = new URL(request.url);
+  if (!safePath(url.pathname) || request.headers.has('Next-Action')) return false;
+  if (url.pathname === '/api/sarin/health' && [...url.searchParams].some(([key, value]) => key !== 'scope' || value !== 'chat')) return false;
+  return rules.some(rule => rule.path.test(url.pathname) && rule.methods.includes(request.method === 'HEAD' ? 'GET' : request.method));
+}
+
+export function privateHeaders(input = new Headers()) {
+  const headers = new Headers(input);
   headers.set('Cache-Control', 'no-store');
   headers.set('CDN-Cache-Control', 'no-store');
   headers.set('Cloudflare-CDN-Cache-Control', 'no-store');
@@ -23,160 +82,68 @@ function responseHeaders(headers = new Headers()) {
   return headers;
 }
 
-function unavailable(request, status = 503) {
-  const headers = responseHeaders();
-  headers.set('Content-Type', 'application/json; charset=utf-8');
+export function rejected(request, status = 404) {
+  const headers = privateHeaders();
   if (status === 503) headers.set('Retry-After', '5');
-  return new Response(request.method === 'HEAD' ? null : JSON.stringify({ error: status === 403 ? 'El origen de la solicitud no está autorizado.' : 'La aplicación está temporalmente no disponible.' }), { status, headers });
+  headers.set('Content-Type', 'application/json; charset=utf-8');
+  const message = status === 403 ? 'Origen no autorizado.' : status === 503 ? 'AgendIA está temporalmente no disponible.' : 'No disponible.';
+  return new Response(request.method === 'HEAD' ? null : JSON.stringify({ error: message }), { status, headers });
 }
 
-function configuration(env) {
-  const publicOrigin = env.SARIN_PUBLIC_ORIGIN;
-  if (publicOrigin !== undefined && publicOrigin !== '' && publicOrigin !== PUBLIC_ORIGIN) throw new Error('Invalid public origin');
-  const supplied = BACKEND_KEYS.some(key => env[key] !== undefined && env[key] !== '');
-  if ('SARIN_APP_HOST' in env) {
-    if (publicOrigin !== PUBLIC_ORIGIN || supplied) throw new Error('Ambiguous or incomplete backend configuration');
-    const service = env.SARIN_APP_HOST;
-    if (!service || typeof service.fetch !== 'function') throw new Error('Invalid application service binding');
-    return { mode: 'service', origin: PUBLIC_ORIGIN, hostname: PUBLIC_HOSTNAME, service, credentials: [] };
-  }
-  if (!supplied) return null;
-  if (publicOrigin !== PUBLIC_ORIGIN) throw new Error('Missing public origin');
-  const origin = env.SARIN_APP_ORIGIN;
-  // Restrict to a dedicated application hostname; never point at the Ollama engine.
-  if (typeof origin !== 'string' || !/^https:\/\/(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+alsdevstudio\.com$/.test(origin)) throw new Error('Invalid app origin');
-  const url = new URL(origin);
-  if (url.hostname.split('.').includes('ia-sarin')) throw new Error('Engine hostname is not an application origin');
-  const clientId = env.SARIN_APP_ACCESS_CLIENT_ID, clientSecret = env.SARIN_APP_ACCESS_CLIENT_SECRET;
-  if (![clientId, clientSecret].every(value => typeof value === 'string' && /^[!-~]{8,4096}$/.test(value))) throw new Error('Invalid app access configuration');
-  // The HTTPS + Access path is retained only for an explicitly configured rollback.
-  return { mode: 'legacy', origin, hostname: url.hostname, clientId, clientSecret, credentials: [clientId, clientSecret] };
-}
-
-function landingPath(pathname) {
-  return LANDING_FILES.has(pathname) || /^\/_next\/static\/[A-Za-z0-9_./-]+\.(?:js|css|woff2?|ttf|png|jpe?g|webp|svg)$/.test(pathname);
-}
-
-function proxyHeaders(request, config) {
+const hop = new Set(['connection', 'keep-alive', 'transfer-encoding', 'te', 'trailer', 'upgrade', 'proxy-connection']);
+export function upstreamHeaders(request) {
   const headers = new Headers(request.headers);
   for (const name of [...headers.keys()]) {
-    if (HOP_BY_HOP.has(name.toLowerCase()) || /^cf-access-|^x-forwarded-/i.test(name) || ['forwarded', 'x-real-ip', 'true-client-ip', 'cf-connecting-ip', 'cf-connecting-ipv6', 'cf-container-target-port', 'x-original-host', 'x-original-url', 'x-rewrite-url', 'proxy-authorization', 'proxy-authenticate'].includes(name.toLowerCase())) headers.delete(name);
+    if (hop.has(name.toLowerCase()) || /^(?:cf-access-|x-forwarded-|x-middleware-|x-sarin-|x-original-|x-rewrite-)/i.test(name)
+      || ['forwarded', 'x-real-ip', 'true-client-ip', 'cf-connecting-ip', 'cf-connecting-ipv6', 'cf-container-target-port', 'proxy-authorization', 'proxy-authenticate'].includes(name.toLowerCase())) headers.delete(name);
   }
-  const cookie = headers.get('Cookie');
-  if (cookie) {
-    const safe = cookie.split(';').map(part => part.trim()).filter(part => part && !ACCESS_COOKIE.test(part.split('=', 1)[0]));
-    if (safe.length) headers.set('Cookie', safe.join('; ')); else headers.delete('Cookie');
-  }
-  // Next receives only the canonical public routing values from this boundary.
-  // The legacy tunnel alone needs its private Host and Access service credentials.
-  headers.set('Host', config.hostname);
-  headers.set('X-Forwarded-Host', PUBLIC_HOSTNAME);
+  // Authentication is the Firebase bearer token. Access cookies are not an app credential.
+  headers.delete('Cookie');
+  headers.set('Host', PUBLIC_HOST);
+  headers.set('X-Forwarded-Host', PUBLIC_HOST);
   headers.set('X-Forwarded-Proto', 'https');
-  if (config.mode === 'legacy') {
-    headers.set('CF-Access-Client-Id', config.clientId);
-    headers.set('CF-Access-Client-Secret', config.clientSecret);
-  }
   return headers;
 }
 
-function containsPrivateValue(value, config) {
-  return config.credentials.some(credential => value.includes(credential)) || (config.mode === 'legacy' && value.toLowerCase().includes(config.hostname));
-}
-
-function publicCookie(value, config) {
-  const parts = value.split(';').map(part => part.trim());
-  if (ACCESS_COOKIE.test(parts[0].split('=', 1)[0]) || config.credentials.some(credential => value.includes(credential))) return null;
-  const domain = parts.find(part => /^domain=/i.test(part));
-  if (domain) {
-    const hostname = domain.slice(7).replace(/^\./, '').toLowerCase();
-    if (hostname !== config.hostname && hostname !== PUBLIC_HOSTNAME) return null;
-  }
-  const safe = parts.filter(part => !/^domain=/i.test(part)).join('; ');
-  return containsPrivateValue(safe, config) ? null : safe;
-}
-
-function sanitizedHeaders(upstream, config) {
-  const headers = new Headers(upstream.headers);
-  const cookies = upstream.headers.getSetCookie();
-  for (const [name, value] of [...headers]) {
-    if (HOP_BY_HOP.has(name.toLowerCase()) || /^cf-access-|^access-control-/i.test(name) || ['authorization', 'proxy-authorization', 'proxy-authenticate', 'cf-authorization', 'set-cookie', 'location', 'refresh', 'server', 'x-powered-by', 'alt-svc', 'report-to', 'nel'].includes(name.toLowerCase()) || containsPrivateValue(value, config)) headers.delete(name);
-  }
-  for (const cookie of cookies) {
-    const safe = publicCookie(cookie, config);
-    if (safe) headers.append('Set-Cookie', safe);
-  }
-  return responseHeaders(headers);
-}
-
-async function discard(response) {
-  try { await response.body?.cancel(); } catch { /* Do not expose transport details. */ }
-}
-
-function redirectLocation(location, upstreamUrl, config) {
-  const target = new URL(location, upstreamUrl);
-  if (target.username || target.password || target.pathname.startsWith('/cdn-cgi/access') || ![config.origin, PUBLIC_ORIGIN].includes(target.origin)) throw new Error('Unapproved redirect');
-  if (target.origin === config.origin) {
-    const publicUrl = new URL(PUBLIC_ORIGIN);
-    publicUrl.pathname = target.pathname;
-    publicUrl.search = target.search;
-    publicUrl.hash = target.hash;
-    return publicUrl.href;
-  }
-  return target.href;
-}
-
-export async function handleRequest(request, env, fetchBackend = fetch) {
-  let timer;
+export async function serviceResponse(request, service) {
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), 660_000);
   try {
-    const config = configuration(env);
-    const publicUrl = new URL(request.url);
-    if (!config) {
-      if (!['GET', 'HEAD'].includes(request.method) || !landingPath(publicUrl.pathname)) return unavailable(request);
-      // Explicit allowlist prevents Pages' SPA fallback from pretending app routes exist.
-      return await env.ASSETS.fetch(request);
+    const upstream = await service.fetch(new Request(request, { headers: upstreamHeaders(request), redirect: 'manual', cache: 'no-store', signal: AbortSignal.any([request.signal, timeout.signal]) }));
+    const headers = new Headers(upstream.headers);
+    if (upstream.status >= 500 || headers.get('cf-mitigated') === 'challenge') {
+      await upstream.body?.cancel();
+      return rejected(request, 503);
     }
-    if (publicUrl.origin !== PUBLIC_ORIGIN) return unavailable(request);
-    const origin = request.headers.get('Origin');
-    if (!['GET', 'HEAD'].includes(request.method) && origin !== null && origin !== PUBLIC_ORIGIN) return unavailable(request, 403);
-    const target = new URL(config.mode === 'service' ? request.url : config.origin);
-    target.pathname = publicUrl.pathname;
-    target.search = publicUrl.search;
-    const timeout = new AbortController();
-    timer = setTimeout(() => timeout.abort(new DOMException('Backend timeout', 'TimeoutError')), HEADER_TIMEOUT_MS);
-    const upstreamRequest = new Request(new Request(target, request), {
-      headers: proxyHeaders(request, config), redirect: 'manual', cache: 'no-store',
-      signal: AbortSignal.any([request.signal, timeout.signal]),
-    });
-    // One attempt only. Never follow a redirect with Access or Firebase credentials.
-    const upstream = config.mode === 'service'
-      ? await config.service.fetch(upstreamRequest)
-      : await fetchBackend(upstreamRequest, { cf: { cacheEverything: false, cacheTtlByStatus: { '100-599': -1 } } });
-    clearTimeout(timer);
-    if (upstream.status >= 500 || upstream.headers.get('cf-mitigated') === 'challenge' || ([401, 403].includes(upstream.status) && !upstream.headers.get('Content-Type')?.toLowerCase().includes('application/json'))) {
-      await discard(upstream);
-      return unavailable(request);
-    }
-    const headers = sanitizedHeaders(upstream, config);
-    const location = upstream.headers.get('Location');
+    const location = headers.get('location');
     if (location) {
-      let redirect;
-      try { redirect = redirectLocation(location, target, config); }
-      catch { await discard(upstream); return unavailable(request); }
-      if (containsPrivateValue(redirect, config)) { await discard(upstream); return unavailable(request); }
-      headers.set('Location', redirect);
+      const target = new URL(location, request.url);
+      if (target.origin !== PUBLIC_ORIGIN || target.username || target.password || !isUiRequest(new Request(target))) {
+        await upstream.body?.cancel();
+        return rejected(request, 503);
+      }
+      headers.set('Location', target.href);
     }
-    if ((upstream.status >= 300 && upstream.status < 400) || request.method === 'HEAD') {
-      await discard(upstream);
-      headers.delete('Content-Length');
-      return new Response(null, { status: upstream.status, headers });
+    for (const name of [...headers.keys()]) {
+      if (hop.has(name.toLowerCase()) || /^(?:cf-access-|access-control-)/i.test(name) || ['authorization', 'proxy-authorization', 'proxy-authenticate', 'set-cookie', 'refresh', 'server', 'x-powered-by', 'alt-svc', 'report-to', 'nel'].includes(name.toLowerCase())) headers.delete(name);
     }
-    // Do not buffer, clone, log or persist request/response bodies.
-    return new Response(upstream.body, { status: upstream.status, headers });
+    const bodyless = request.method === 'HEAD' || upstream.status >= 300 && upstream.status < 400;
+    if (bodyless) { await upstream.body?.cancel(); headers.delete('Content-Length'); }
+    return new Response(bodyless ? null : upstream.body, { status: upstream.status, headers: privateHeaders(headers) });
   } catch {
-    return unavailable(request);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
+    return rejected(request, 503);
+  } finally { clearTimeout(timer); }
+}
+
+export async function handleRequest(request, env) {
+  if (env.AGENDIA_PUBLIC_ORIGIN !== PUBLIC_ORIGIN || !env.SARIN_API || typeof env.SARIN_API.fetch !== 'function'
+    || !env.AGENDIA_WEB || typeof env.AGENDIA_WEB.fetch !== 'function' || 'SARIN_APP_HOST' in env) return rejected(request, 503);
+  if (new URL(request.url).origin !== PUBLIC_ORIGIN) return rejected(request);
+  const api = isCommercialApiRequest(request);
+  if (!api && !isUiRequest(request)) return rejected(request);
+  const origin = request.headers.get('Origin');
+  if (origin !== null && origin !== PUBLIC_ORIGIN) return rejected(request, 403);
+  return serviceResponse(request, api ? env.SARIN_API : env.AGENDIA_WEB);
 }
 
 export default { fetch: (request, env) => handleRequest(request, env) };

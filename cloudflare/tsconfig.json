@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2022", "lib": ["ES2022"], "module": "ESNext", "moduleResolution": "Bundler",
-    "strict": true, "noEmit": true, "skipLibCheck": true, "types": [], "allowImportingTsExtensions": true,
+    "strict": true, "noEmit": true, "skipLibCheck": true, "types": [], "allowImportingTsExtensions": true, "allowJs": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.ts", "worker-configuration.d.ts"]
+  "include": ["src/agendia-ui.ts", "src/agendia-router.ts", "agendia-configuration.d.ts"]
 }

@@ -1,11 +1,12 @@
 {
-  "name": "sarinbotsaas",
+  "name": "agendia-app",
   "pages_build_output_dir": "./landing/out",
   "compatibility_date": "2026-10-13",
   "vars": {
-    "SARIN_PUBLIC_ORIGIN": "https://sarinbotsaas.pages.dev"
+    "AGENDIA_PUBLIC_ORIGIN": "https://agendia-app.pages.dev"
   },
   "services": [
-    { "binding": "SARIN_APP_HOST", "service": "sarin-bot-app" }
+    { "binding": "SARIN_API", "service": "sarin-bot-app" },
+    { "binding": "AGENDIA_WEB", "service": "agendia-web" }
   ]
 }

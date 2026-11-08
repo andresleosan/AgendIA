@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 const root = fileURLToPath(new URL('../', import.meta.url));
 // Copy only the approved brand assets, never environment files or SaaS output.
 await mkdir(resolve(root, 'landing/public/brand'), { recursive: true });
-for (const file of ['sarin-welcome.png', 'sarin-flight.png', 'sarin-face-mark.png']) {
+for (const file of ['sarin-welcome.png', 'sarin-flight.png', 'sarin-face-mark.png', 'agendia-icon.svg', 'agendia-192.png', 'agendia-512.png']) {
   await copyFile(resolve(root, 'public/brand', file), resolve(root, 'landing/public/brand', file));
 }
 

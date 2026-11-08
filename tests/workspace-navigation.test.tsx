@@ -39,14 +39,13 @@ describe('workspace navigation', () => {
     expect(renderer.root.findAllByType('a').some(link => link.props.href === '/dashboard/schedule')).toBe(false);
   });
 
-  it('onlySuperadminGetsContextSwitchOnMobile', async () => {
+  it('business navigation never exposes administration, including for a superadmin', async () => {
     await shell();
     expect(renderer.root.findAllByType('a').some(link => link.props.href === '/admin')).toBe(false);
     state.isSuperadmin = true;
     await act(async () => renderer.update(createElement(AppShell, { children: 'Trabajo' })));
-    const link = renderer.root.findAllByType('a').find(link => link.props.href === '/admin')!;
-    expect(link.children.join('')).toContain('Administración de Sarin');
-    expect(link.props.className).not.toContain('hidden');
+    expect(renderer.root.findAllByType('a').some(link => String(link.props.href).startsWith('/admin'))).toBe(false);
+    expect(renderer.root.findAllByType('a').filter(link => String(link.props.href).startsWith('/dashboard'))).toHaveLength(4);
   });
 
   it('activeModuleUsesValidatedSelection', async () => {

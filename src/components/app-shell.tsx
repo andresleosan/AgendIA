@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { ChevronRight, LogOut } from "lucide-react";
 import { type ReactNode } from "react";
 import { useAuth } from "@/components/auth-provider";
-import { SarinBrand } from "@/components/sarin-brand";
+import { AgendiaBrand, BrandCredits } from "@/components/agendia-brand";
 import { UserAvatar } from "@/components/user-avatar";
 import { ConsentPanel, useAccountConsent } from './consent-panel';
 import { WorkspaceNavigation } from '@/components/workspace-navigation';
@@ -43,7 +43,7 @@ export function AppShell({
       <a href="#workspace-content" className="sarin-skip">Saltar al contenido</a>
       <aside className="border-b border-sarin-line bg-sarin-paper lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col lg:border-r lg:border-b-0">
         <div className="flex items-center justify-between px-5 py-5 lg:px-6 lg:py-8">
-          <Link href="/" aria-label="SarinBot, inicio"><SarinBrand /></Link>
+          <Link href="/" aria-label="AgendIA, inicio"><AgendiaBrand /></Link>
         </div>
         <WorkspaceNavigation context={admin ? 'platform' : 'business'} items={links} activeId={activeId} isSuperadmin={isSuperadmin} />
         <div className="mt-auto hidden px-6 pb-6 pt-10 lg:block">
@@ -52,10 +52,11 @@ export function AppShell({
       </aside>
       <div className="min-w-0">
         <header className="flex min-h-16 items-center justify-between gap-3 border-b border-sarin-line bg-sarin-paper px-4 sm:px-6 lg:px-8">
-          <div className="flex min-w-0 items-center gap-2 text-xs text-sarin-muted"><span className="hidden sm:inline">{admin ? "Administración" : "Mi espacio"}</span><ChevronRight aria-hidden="true" className="hidden h-3.5 w-3.5 sm:block" /><span className="truncate text-sarin-ink">{active?.label ?? "SarinBot"}</span></div>
+          <div className="flex min-w-0 items-center gap-2 text-xs text-sarin-muted"><span className="hidden sm:inline">{admin ? "Administración" : "Mi espacio"}</span><ChevronRight aria-hidden="true" className="hidden h-3.5 w-3.5 sm:block" /><span className="truncate text-sarin-ink">{active?.label ?? "AgendIA"}</span></div>
           <div className="flex shrink-0 items-center gap-3"><UserAvatar name={name} photoURL={user?.photoURL} /><span className="hidden max-w-44 truncate text-xs text-sarin-muted sm:block">{name}</span><button onClick={() => void signOut()} aria-label="Cerrar sesión" title="Cerrar sesión" className="grid h-11 w-11 place-items-center rounded-[10px] text-sarin-muted hover:bg-sarin-soft hover:text-sarin-blue"><LogOut aria-hidden="true" className="h-4 w-4" /></button></div>
         </header>
         <main id="workspace-content" className="mx-auto max-w-[1440px] px-4 py-5 sm:px-6 lg:px-8 lg:py-6">{!admin && <ConsentPanel controller={accountConsent} title="Permisos de mi cuenta" />}{children}</main>
+        <footer className="mx-auto max-w-[1440px] border-t border-sarin-line px-4 py-5 sm:px-6 lg:px-8"><BrandCredits /></footer>
       </div>
     </div>
   );

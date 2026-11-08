@@ -1,12 +1,12 @@
 ﻿import type { Metadata } from "next";
 import Link from "next/link";
-import { SarinBrand } from "@/components/sarin-brand";
+import { AgendiaBrand, BrandCredits } from "@/components/agendia-brand";
 import { sarinContact, sarinWhatsAppUrl } from "@/lib/sarin-contact";
 import { PlatformWhatsAppLink } from "@/components/platform-whatsapp-link";
 
 export const metadata: Metadata = {
-  title: "Ayuda · SarinBot",
-  description: "Cómo reservar y gestionar citas, pagar la prueba de SarinBot y solicitar soporte.",
+  title: "Ayuda · AgendIA",
+  description: "Cómo reservar y gestionar citas, pagar la prueba de AgendIA y solicitar soporte.",
 };
 
 const linkClass = "text-sarin-blue underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-sarin-blue";
@@ -16,14 +16,14 @@ export default function HelpPage() {
     <div className="min-h-screen bg-sarin-canvas text-sarin-ink">
       <a href="#contenido" className="sarin-skip">Saltar al contenido</a>
       <header className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-4 border-b border-sarin-line px-5 py-6 sm:px-8">
-        <Link href="/" aria-label="SarinBot, inicio"><SarinBrand /></Link>
-        <nav aria-label="Información de SarinBot" className="flex flex-wrap gap-5 text-sm">
+        <Link href="/" aria-label="AgendIA, inicio"><AgendiaBrand /></Link>
+        <nav aria-label="Información de AgendIA" className="flex flex-wrap gap-5 text-sm">
           <Link href="/ayuda" aria-current="page" className="inline-flex min-h-11 items-center font-semibold">Ayuda</Link>
           <Link href="/privacidad" className={`inline-flex min-h-11 items-center ${linkClass}`}>Privacidad</Link>
         </nav>
       </header>
       <main id="contenido" className="mx-auto max-w-3xl px-5 py-8 sm:px-8 sm:py-12">
-        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Ayuda con SarinBot</h1>
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Ayuda con AgendIA</h1>
         <p className="mt-3 text-sm leading-7 text-sarin-muted">Citas de clientes, acceso del negocio y pagos. Última actualización: 18 de octubre de 2026.</p>
         <div className="mt-8 space-y-8 rounded-2xl border border-sarin-line bg-sarin-paper p-5 text-sm leading-7 sm:p-8">
           <section aria-labelledby="citas">
@@ -65,6 +65,7 @@ export default function HelpPage() {
         </div>
         <div className="mt-8"><PlatformWhatsAppLink /></div>
         <footer className="mt-6 flex flex-wrap gap-x-6 gap-y-2 text-sm">
+          <BrandCredits />
           <Link href="/privacidad" className={`inline-flex min-h-11 items-center ${linkClass}`}>Privacidad y datos</Link>
           <Link href="/" className={`inline-flex min-h-11 items-center ${linkClass}`}>Volver al inicio</Link>
         </footer>

@@ -52,11 +52,31 @@ export function imageReference(local, { sha, account }) {
   return images[0];
 }
 
-export function releaseTarget(app, { sha, account, workerVersion, image }) {
+function validateContainerScope(app, account) {
   if (app?.name !== 'agendia-web-agendiaweb' || app.account_id !== account || !app.id || !app.durable_objects?.namespace_id
-    || app.max_instances !== 1 || app.scheduling_policy !== 'default' || !Number.isInteger(app.version) || app.version < 1
-    || app.configuration?.image !== image || !uuid(workerVersion)) fail('AGENDIA_CONTAINER_TARGET');
+    || app.max_instances !== 1 || app.scheduling_policy !== 'default' || !Number.isInteger(app.version) || app.version < 1) fail('AGENDIA_CONTAINER_TARGET');
+}
+
+export function releaseTarget(app, { sha, account, workerVersion, image }) {
+  validateContainerScope(app, account);
+  if (app.configuration?.image !== image || !uuid(workerVersion)) fail('AGENDIA_CONTAINER_TARGET');
   return { sha, account, workerVersion, image, appId: app.id, containerVersion: app.version, namespaceId: app.durable_objects.namespace_id, pagesDeployment: undefined };
+}
+
+export async function waitForContainerTarget({ initialApp, readApp, wake, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), timeoutMs = 600_000, ...details }) {
+  validateContainerScope(initialApp, details.account);
+  const deadline = now() + timeoutMs;
+  let app = initialApp;
+  while (now() < deadline) {
+    validateContainerScope(app, details.account);
+    if (app.id !== initialApp.id || app.durable_objects.namespace_id !== initialApp.durable_objects.namespace_id) fail('AGENDIA_CONTAINER_TARGET');
+    // The API keeps the previous configuration/version until asynchronous rollout completes.
+    if (app.configuration?.image === details.image && !app.active_rollout_id) return releaseTarget(app, details);
+    await wake();
+    await sleep(10_000);
+    app = await readApp();
+  }
+  fail('AGENDIA_CONTAINER_ROLLOUT_NOT_READY');
 }
 
 export function productionReady({ app, deployment, version, instances, pages }, target) {

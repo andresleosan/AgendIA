@@ -3,7 +3,7 @@ import { readFile, writeFile, mkdtemp, mkdir, rm, cp } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { publicBuildArguments, validateDeploymentConfigs, classifyCommandFailure } from './agendia-deployment.mjs';
-import { deployedVersion, deployedPages, latestDeployment, inspectReleaseImage, imageReference, releaseTarget, waitForRelease } from './agendia-release-state.mjs';
+import { deployedVersion, deployedPages, latestDeployment, inspectReleaseImage, imageReference, waitForContainerTarget, waitForRelease } from './agendia-release-state.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const wrangler = join(root, 'cloudflare/node_modules/wrangler/bin/wrangler.js');
@@ -106,7 +106,16 @@ async function main() {
     pull: image => command('docker', ['pull', '--platform', 'linux/amd64', image]),
   });
   const image = imageReference(localImage, { sha, account: process.env.CLOUDFLARE_ACCOUNT_ID });
-  const target = releaseTarget(app, { sha, account: process.env.CLOUDFLARE_ACCOUNT_ID, workerVersion, image });
+  progress('WAIT_UI_CONTAINER_ROLLOUT');
+  const target = await waitForContainerTarget({ initialApp: app, sha, account: process.env.CLOUDFLARE_ACCOUNT_ID, workerVersion, image,
+    readApp: () => observe(['containers', 'info', app.id]),
+    wake: async () => {
+      try {
+        const response = await fetch('https://agendia-app.pages.dev/dashboard', { redirect: 'error', signal: AbortSignal.timeout(30_000) });
+        await response.body?.cancel();
+      } catch { /* A starting singleton may not serve yet; rollout metadata decides readiness. */ }
+    },
+  });
   await verifySource(sha);
   progress('DEPLOY_AGENDIA_PAGES');
   await command(process.execPath, [wrangler, 'pages', 'deploy', pagesArtifact, '--project-name', 'agendia-app', '--branch', 'main', '--commit-hash', sha, '--commit-dirty=false', '--commit-message', 'AgendIA ' + sha], 180000, source);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { deployedVersion, deployedPages, latestDeployment, inspectReleaseImage, imageReference, releaseTarget, productionReady, waitForRelease } from '../../scripts/agendia-release-state.mjs';
+import { deployedVersion, deployedPages, latestDeployment, inspectReleaseImage, imageReference, releaseTarget, waitForContainerTarget, productionReady, waitForRelease } from '../../scripts/agendia-release-state.mjs';
 
 const sha = 'a'.repeat(40), account = 'b'.repeat(32), version = '12345678-1234-1234-1234-123456789abc';
 const image = `registry.cloudflare.com/${account}/agendia-web-agendiaweb@sha256:${'c'.repeat(64)}`;
@@ -75,6 +75,42 @@ test('accepts only the exact published Worker, Container and Pages revisions', (
     value => { value.pages.canonical_deployment.id = 'old-pages'; },
     value => { value.pages.canonical_deployment.deployment_trigger.metadata.commit_hash = 'd'.repeat(40); },
   ]) { const value = snapshot(); mutate(value); assert.equal(productionReady(value, target), false); }
+});
+
+test('waits for the intended image to finish rollout before pinning the app version', async () => {
+  const previous = { ...app, version: 3, configuration: { image: image.replace(/c{64}/, 'd'.repeat(64)) }, active_rollout_id: 'pending' };
+  let clock = 0, reads = 0, wakes = 0, pagesPublished = 0;
+  const result = await waitForContainerTarget({ initialApp: previous, sha, account, workerVersion: version, image,
+    readApp: async () => { reads++; return reads === 1 ? { ...app, active_rollout_id: 'pending' } : app; },
+    wake: async () => { wakes++; }, now: () => clock, sleep: async ms => { clock += ms; }, timeoutMs: 30_000,
+  });
+  pagesPublished++;
+  assert.equal(result.containerVersion, 4);
+  assert.equal(result.image, image);
+  assert.equal(reads, 2);
+  assert.equal(wakes, 2);
+  assert.equal(pagesPublished, 1);
+
+  clock = 0; pagesPublished = 0;
+  await assert.rejects(async () => {
+    await waitForContainerTarget({ initialApp: previous, sha, account, workerVersion: version, image,
+      readApp: async () => previous, wake: async () => {}, now: () => clock, sleep: async ms => { clock += ms; }, timeoutMs: 10_000,
+    });
+    pagesPublished++;
+  }, /AGENDIA_CONTAINER_ROLLOUT_NOT_READY/);
+  assert.equal(pagesPublished, 0);
+});
+
+test('rejects identity, namespace, resource policy and read failures while awaiting rollout', async () => {
+  const previous = { ...app, configuration: { image: 'old-image' }, active_rollout_id: 'pending' };
+  for (const change of [{ id: 'other' }, { account_id: 'other' }, { name: 'other' }, { durable_objects: { namespace_id: 'other' } }, { max_instances: 2 }, { scheduling_policy: 'regional' }, { version: undefined }]) {
+    await assert.rejects(waitForContainerTarget({ initialApp: previous, sha, account, workerVersion: version, image,
+      readApp: async () => ({ ...app, ...change }), wake: async () => {}, sleep: async () => {},
+    }), /AGENDIA_CONTAINER_TARGET/);
+  }
+  await assert.rejects(waitForContainerTarget({ initialApp: previous, sha, account, workerVersion: version, image,
+    readApp: async () => { throw new Error('COMMAND_AUTHENTICATION'); }, wake: async () => {}, sleep: async () => {},
+  }), /COMMAND_AUTHENTICATION/);
 });
 
 test('fails closed on errors, missing metadata, extra bindings or incomplete inventory', () => {

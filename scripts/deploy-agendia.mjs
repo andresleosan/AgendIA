@@ -3,6 +3,7 @@ import { readFile, writeFile, mkdtemp, mkdir, rm, cp } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { publicBuildArguments, validateDeploymentConfigs, classifyCommandFailure } from './agendia-deployment.mjs';
+import { deployedVersion, deployedPages, latestDeployment, inspectReleaseImage, imageReference, releaseTarget, waitForRelease } from './agendia-release-state.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const wrangler = join(root, 'cloudflare/node_modules/wrangler/bin/wrangler.js');
@@ -31,6 +32,24 @@ async function verifySource(sha) {
   if (await command('git', ['rev-parse', 'HEAD']) !== sha || await command('git', ['branch', '--show-current']) !== 'main'
     || await command('git', ['status', '--porcelain', '--untracked-files=normal'])) throw new Error('CLEAN_MAIN_REQUIRED');
   if ((await command('git', ['ls-remote', 'origin', 'refs/heads/main'])).split(/\s+/)[0] !== sha) throw new Error('PUBLISHED_MAIN_REQUIRED');
+}
+
+async function commandJson(binary, args) {
+  const value = await command(binary, args);
+  try { return JSON.parse(value); } catch { throw new Error('AGENDIA_OBSERVATION_JSON'); }
+}
+
+async function pagesState() {
+  // A local release may use Wrangler OAuth; CI uses its dedicated token. Neither is persisted or printed.
+  const token = process.env.CLOUDFLARE_API_TOKEN || (await commandJson(process.execPath, [wrangler, 'auth', 'token', '--json'])).token;
+  if (typeof token !== 'string' || !token) throw new Error('COMMAND_AUTHENTICATION');
+  const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${process.env.CLOUDFLARE_ACCOUNT_ID}/pages/projects/agendia-app`, {
+    headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) { await response.body?.cancel(); throw new Error(response.status === 401 || response.status === 403 ? 'COMMAND_AUTHENTICATION' : 'AGENDIA_OBSERVATION_HTTP'); }
+  const result = await response.json();
+  if (result.success !== true || !result.result) throw new Error('AGENDIA_OBSERVATION_JSON');
+  return result.result;
 }
 
 async function main() {
@@ -72,28 +91,48 @@ async function main() {
   config.containers[0].image_vars = { ...imageArguments, AGENDIA_SOURCE_SHA: sha };
   const configPath = join(temporary, 'worker.json');
   await writeFile(configPath, JSON.stringify(config), { mode: 0o600 });
+  const receiptPath = join(temporary, 'deployment.ndjson');
+  commandEnv.WRANGLER_OUTPUT_FILE_PATH = receiptPath;
+  const observe = args => commandJson(process.execPath, [wrangler, ...args, '--config', configPath, '--json']);
   await verifySource(sha);
   progress('DEPLOY_UI_WORKER');
-  await command(process.execPath, [wrangler, 'deploy', '--config', configPath, '--tsconfig', join(source, 'cloudflare/tsconfig.json'), '--autoconfig=false', '--containers-rollout=immediate', '--tag', sha, '--message', 'AgendIA UI ' + sha], 1200000);
+  const workerOutput = await command(process.execPath, [wrangler, 'deploy', '--config', configPath, '--tsconfig', join(source, 'cloudflare/tsconfig.json'), '--autoconfig=false', '--containers-rollout=immediate', '--tag', sha, '--message', 'AgendIA UI ' + sha], 1200000);
+  const workerVersion = deployedVersion(await readFile(receiptPath, 'utf8'));
+  const apps = (await observe(['containers', 'list'])).filter(app => app.name === 'agendia-web-agendiaweb');
+  if (apps.length !== 1) throw new Error('AGENDIA_CONTAINER_TARGET');
+  const app = await observe(['containers', 'info', apps[0].id]);
+  const localImage = await inspectReleaseImage({ account: process.env.CLOUDFLARE_ACCOUNT_ID, workerVersion, workerOutput, appImage: app.configuration?.image,
+    inspect: async image => (await commandJson('docker', ['image', 'inspect', image]))[0],
+    pull: image => command('docker', ['pull', '--platform', 'linux/amd64', image]),
+  });
+  const image = imageReference(localImage, { sha, account: process.env.CLOUDFLARE_ACCOUNT_ID });
+  const target = releaseTarget(app, { sha, account: process.env.CLOUDFLARE_ACCOUNT_ID, workerVersion, image });
   await verifySource(sha);
   progress('DEPLOY_AGENDIA_PAGES');
   await command(process.execPath, [wrangler, 'pages', 'deploy', pagesArtifact, '--project-name', 'agendia-app', '--branch', 'main', '--commit-hash', sha, '--commit-dirty=false', '--commit-message', 'AgendIA ' + sha], 180000, source);
-  progress('VERIFY_PUBLIC_BOUNDARIES');
-  let ready = false;
-  const deadline = Date.now() + 300000;
-  while (!ready && Date.now() < deadline) {
+  target.pagesDeployment = deployedPages(await readFile(receiptPath, 'utf8'), sha);
+  progress('VERIFY_PRODUCTION_REVISION');
+  await waitForRelease({ target, readSnapshot: async () => {
+    const [app, instances, deployments, version, pages] = await Promise.all([
+      observe(['containers', 'info', target.appId]),
+      observe(['containers', 'instances', target.appId, '--per-page', '100']),
+      observe(['deployments', 'list', '--name', 'agendia-web']),
+      observe(['versions', 'view', target.workerVersion, '--name', 'agendia-web']),
+      pagesState(),
+    ]);
+    return { app, instances, deployment: latestDeployment(deployments), version, pages };
+  }, checkHttp: async () => {
     try {
       const checks = [['/dashboard', 200], ['/api/session', 401], ['/api/admin', 404], ['/api/whatsapp/webhook', 404]];
-      ready = (await Promise.all(checks.map(async ([path, status]) => {
+      return (await Promise.all(checks.map(async ([path, status]) => {
         const response = await fetch('https://agendia-app.pages.dev' + path, { redirect: 'error', signal: AbortSignal.timeout(30000) });
         await response.body?.cancel();
         return response.status === status && response.headers.get('cache-control') === 'no-store';
       }))).every(Boolean);
-    } catch { ready = false; }
-    if (!ready) await new Promise(resolveDelay => setTimeout(resolveDelay, 10000));
-  }
-  if (!ready) throw new Error('PUBLIC_BOUNDARY_CHECK_FAILED');
-  console.log(JSON.stringify({ sha, worker: 'agendia-web', pages: 'agendia-app', publicChecks: 'passed' }));
+    } catch { return false; }
+  } });
+  await verifySource(sha);
+  console.log(JSON.stringify({ sha, worker: 'agendia-web', workerVersion, image, containerVersion: target.containerVersion, pages: 'agendia-app', pagesDeployment: target.pagesDeployment, publicChecks: 'passed', revisionChecks: 'passed' }));
 }
 
 try { await main(); }

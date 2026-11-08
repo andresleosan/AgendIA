@@ -53,4 +53,17 @@ describe('private client policy and booking admission', () => {
     await expect(readClientPolicy(value.id, 'client', db)).rejects.toMatchObject({ status: 503 });
     await expect(createAppointment({ uid: 'client' }, value.id, input, 'corrupt', db)).rejects.toMatchObject({ status: 503 });
   });
+  it('unblocks new bookings without clearing the client limit or restoring cancelled appointments', async () => {
+    const { db, rows } = setup();
+    const first = await createAppointment({ uid: 'client' }, value.id, input, 'first', db);
+    await updateClientPolicy({ uid: 'owner' }, value.id, { clientUid: 'client', blocked: true, futureAppointmentLimit: 1, reason: 'Revisión de uso' }, db);
+    await cancelAppointment({ uid: 'client' }, value.id, first.id, db);
+    await expect(createAppointment({ uid: 'client' }, value.id, input, 'after-block', db)).rejects.toMatchObject({ code: 'CLIENT_BLOCKED', status: 403 });
+    expect(await updateClientPolicy({ uid: 'owner' }, value.id, { clientUid: 'client', blocked: false, reason: 'Revisión completada' }, db)).toMatchObject({ blocked: false, futureAppointmentLimit: 1, inheritsLimit: false });
+    const restored = await createAppointment({ uid: 'client' }, value.id, input, 'after-block', db);
+    expect(restored).toMatchObject({ status: 'confirmed', client: { uid: 'client' } });
+    await expect(createAppointment({ uid: 'client' }, value.id, { ...input, resourceId: 'two' }, 'over-limit', db)).rejects.toMatchObject({ code: 'CLIENT_BOOKING_LIMIT', status: 409 });
+    expect(rows.get(`businesses/policy/appointments/${first.id}`)?.data.status).toBe('cancelled_by_client');
+    expect([...rows.keys()].filter(path => path.includes('/appointments/'))).toHaveLength(2);
+  });
 });

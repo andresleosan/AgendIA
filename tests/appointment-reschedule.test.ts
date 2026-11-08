@@ -173,12 +173,17 @@ describe('appointment reschedule domain', () => {
     expect([...rows.keys()].filter(path => path.includes('/appointments/'))).toHaveLength(1);
   });
 
-  it('revalidates a client block at confirmation without changing the source', async () => {
+  it('revalidates a client block and allows the same reschedule after unblocking', async () => {
     const { db, rows } = scenario();
     const proposal = await createBookingProposal(rescheduleActor, rescheduleBusiness.id, rescheduleSelection, 'demo-block-before-confirm', db, undefined, { appointmentId: rescheduleSource.id, sourceRevision: 0 });
     await updateClientPolicy({ uid: 'demo-reschedule-owner' }, rescheduleBusiness.id, { clientUid: rescheduleActor.uid, blocked: true, reason: 'Demo client block' }, db);
     await expect(confirmBookingProposal(rescheduleActor, rescheduleBusiness.id, proposal.id, confirmation, db)).rejects.toMatchObject({ code: 'CLIENT_BLOCKED' });
     expect(rows.get(rescheduleSourcePath)?.data).toEqual(rescheduleSource);
+    await updateClientPolicy({ uid: 'demo-reschedule-owner' }, rescheduleBusiness.id, { clientUid: rescheduleActor.uid, blocked: false, reason: 'Demo client release' }, db);
+    const moved = await confirmBookingProposal(rescheduleActor, rescheduleBusiness.id, proposal.id, confirmation, db);
+    expect(moved).toMatchObject({ id: rescheduleSource.id, startTimeStr: rescheduleSelection.startTimeStr, rescheduleRevision: 1 });
+    expect(await confirmBookingProposal(rescheduleActor, rescheduleBusiness.id, proposal.id, confirmation, db)).toEqual(moved);
+    expect([...rows.keys()].filter(path => path.includes('/appointments/'))).toHaveLength(1);
   });
 
   it.each(['suspended', 'pending_payment', 'expired'] as const)('revalidates %s subscription at confirmation without moving the source', async status => {

@@ -122,9 +122,11 @@ it('generated real queries use team indexes and bounded descending suffix20 amon
     const requestId = `demo-history-${sequence}`, command = { ...template.command as object, requestId, expectedTeamRevision: sequence - 1 };
     const id = stableDocumentId('team-access', f.business.id, f.owner.uid, requestId);
     const data = teamAccessEventSchema.parse({ ...template, id, requestId, sequence, command, commandHash: createHash('sha256').update(teamAccessCommandCanonicalString(command as Parameters<typeof teamAccessCommandCanonicalString>[0])).digest('hex') });
-    inserts.push(runtime.db.prepare('INSERT INTO app_documents(path,parent,document_id,data,updated_at) VALUES(?,?,?,?,?)').bind(`${eventParent}/${id}`, eventParent, id, JSON.stringify(data), teamNow));
+    inserts.push({ id, data });
   }
-  for (let offset = 0; offset < inserts.length; offset += 100) await runtime.db.batch(inserts.slice(offset, offset + 100));
+  // Bound preparation as well as execution; preparing all rows can outlive the sidecar's idle socket.
+  for (let offset = 0; offset < inserts.length; offset += 100) await runtime.db.batch(inserts.slice(offset, offset + 100).map(({ id, data }) => runtime.db.prepare('INSERT INTO app_documents(path,parent,document_id,data,updated_at) VALUES(?,?,?,?,?)').bind(`${eventParent}/${id}`, eventParent, id, JSON.stringify(data), teamNow)));
+  expect((await runtime.db.prepare('SELECT count(*) AS count FROM app_documents WHERE parent=?').bind(eventParent).first()).count).toBe(1001);
   const stateRef = db.collection('serverSettings').doc(teamStateId(f.business.id)); await stateRef.set({ ...(await stateRef.get()).data()!, revision: 1001 });
   await teamFixture(db, 'demo-query-isolation');
   reads.length = 0;

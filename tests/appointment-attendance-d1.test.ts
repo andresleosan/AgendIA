@@ -204,10 +204,9 @@ it('d1HistoryUsesIndexedBoundedAppointmentPagesAmong1001UnrelatedEvents', async 
       ...(sequence === 1 ? {} : { correctionReason: 'recording_error' }) });
   }
   const parent = `businesses/${f.business.id}/attendanceEvents`;
-  const unrelated = Array.from({ length: 1001 }, (_, index) => runtime.db.prepare('INSERT INTO app_documents(path,parent,document_id,data,updated_at,blob) VALUES(?,?,?,?,?,NULL)').bind(`${parent}/demo-unrelated-${index}`, parent, `demo-unrelated-${index}`, JSON.stringify({ appointmentId: `demo-other-${index}`, sequence: 1 }), attendanceNow));
-  // Keep each local sidecar RPC bounded; this seed is independent of command
-  // atomicity, which the competing transaction tests exercise above.
-  for (let offset = 0; offset < unrelated.length; offset += 100) await runtime.db.batch(unrelated.slice(offset, offset + 100));
+  const unrelated = Array.from({ length: 1001 }, (_, index) => ({ id: `demo-unrelated-${index}`, data: { appointmentId: `demo-other-${index}`, sequence: 1 } }));
+  // Bound synchronous prepare/bind RPCs too, so idle sidecar sockets can close between batches.
+  for (let offset = 0; offset < unrelated.length; offset += 100) await runtime.db.batch(unrelated.slice(offset, offset + 100).map(({ id, data }) => runtime.db.prepare('INSERT INTO app_documents(path,parent,document_id,data,updated_at,blob) VALUES(?,?,?,?,?,NULL)').bind(`${parent}/${id}`, parent, id, JSON.stringify(data), attendanceNow)));
   expect((await runtime.db.prepare('SELECT count(*) AS count FROM app_documents WHERE parent=?').bind(parent).first()).count).toBe(1026);
   const sql = "SELECT path,data,blob FROM app_documents WHERE parent=? AND json_type(data,'$.appointmentId') = 'text' AND json_extract(data,'$.appointmentId') = ? AND json_type(data,'$.sequence') IN ('integer','real') AND json_extract(data,'$.sequence') < ? AND json_type(data,'$.sequence') IN ('integer','real') ORDER BY json_extract(data,'$.sequence') DESC,path ASC LIMIT ?";
   const query = runtime.db.prepare(sql).bind(parent, f.appointment.id, 26, 21), result = await query.all();

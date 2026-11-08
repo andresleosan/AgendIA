@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { verifyWorkingSource } from './check-source.mjs';
 
 const statuses = new Set(['pending', 'ready', 'in_progress', 'needs_input', 'implemented', 'in_qa', 'verified', 'published', 'activated']);
 const kinds = new Set(['design', 'decompose', 'build', 'integration', 'gate', 'qa', 'release', 'activate']);
@@ -130,8 +131,19 @@ async function main() {
     if (!gateReady(plan, { requiresAllConstruction: true, requiresAllRequirementsResolved: true, requiresConcreteQaCases: true }, tasks)) errors.push('Construction, requirement implementation or concrete cases are not complete; final QA remains locked.');
   }
   if (errors.length) { console.error(JSON.stringify({ valid: false, errors }, null, 2)); process.exitCode = 1; return; }
+  const next = args.includes('--next') ? selectNextTask(plan) : null;
+  let source;
+  if (args.includes('--ready-for-qa') || args.includes('--next') && (plan.workspace?.codeRoot || next && next.id !== 'R0-001')) {
+    try {
+      source = await verifyWorkingSource(plan);
+      if (!source.aligned) throw new Error('SOURCE_COMMIT_MISMATCH: HEAD local no coincide con main de GitHub; conciliar la fuente antes de nuevos cambios de producto.');
+    } catch (error) {
+      console.error(JSON.stringify({ valid: true, sourceVerified: false, source, errors: [error.message], next: null, resumeTaskId: plan.currentTaskId ?? undefined }, null, 2));
+      process.exitCode = 1; return;
+    }
+  }
   console.log(JSON.stringify({ valid: true, tasks: plan.tasks.length, requirements: expectedRequirements.length,
-    planReview: plan.approval.plan.status, next: args.includes('--next') ? selectNextTask(plan)?.id ?? null : undefined }, null, 2));
+    planReview: plan.approval.plan.status, source, next: args.includes('--next') ? next?.id ?? null : undefined }, null, 2));
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(error => { console.error(error.message); process.exitCode = 1; });

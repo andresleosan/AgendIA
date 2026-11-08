@@ -25,6 +25,10 @@ node .agents/skills/avanzar/scripts/check-plan.mjs --next
 
 El verificador valida y selecciona; no ejecuta `checks[].command`. Leer esos comandos como contratos revisables, identificando CWD y simulaciones antes de ejecutarlos.
 
+Con `--next`, antes de devolver una tarea, comprueba automáticamente la fuente de `workspace.codeRoot`: remoto de lectura y push del repositorio registrado, rama `main`, SHA de `HEAD` y SHA de `origin/main` consultado en vivo mediante `git ls-remote`. No usa la copia en caché de `origin/main` como prueba. Muestra ambos SHA y `aligned`; informa además `dirty` y cantidad de entradas locales: compartir commit no significa tener todos los archivos sin cambios.
+
+Una discrepancia, GitHub inaccesible, otra rama o repositorio devuelve exit 1, `sourceVerified: false` y `next: null`. El grafo puede seguir siendo `valid: true`: es un rechazo de fuente, no una inconsistencia que deba repararse en `tasks.json`. Conciliar el workspace antes de nuevos cambios de producto, preservando archivos locales; no ejecutar resets, force-push ni publicar commits de procedencia desconocida. Si hay una tarea actual con commit propio pendiente de push, reanudar únicamente su entrega tras comprobar el alcance y el remoto, sin empezar otra tarea ni fabricar una coincidencia. El chequeo es de solo lectura; no hace fetch/pull/merge ni altera archivos o estado. Solo R0-001 sin workspace queda exento para poder crear la base inicial. Sin `--next` ni `--ready-for-qa`, la validación del plan permanece local y sin red.
+
 ## Modelo y esfuerzo por tarea
 
 El propietario pidió recomendar modelo/esfuerzo para ahorrar tokens, **solo al finalizar una tarea completamente validada y entregada**. No anunciar esa recomendación al iniciar `/avanzar`. Aplicar la [guía de selección](../../../docs/tooling/sarin-model-selection.md) al siguiente ID real, sin volver a analizar la cola completa ni cambiar configuración global.
@@ -80,7 +84,7 @@ Antes de una operación real con `authorizationKey`, comprobar de nuevo `approva
 ## Comprobación del coordinador
 
 ```powershell
-node --test .agents/skills/avanzar/scripts/check-plan.test.mjs
+node --test .agents/skills/avanzar/scripts/*.test.mjs
 ```
 
 Estos tests verifican invariantes del coordinador, no funciones de Sarin. No ejecutar la suite de producto para una modificación meramente documental de esta entrada.

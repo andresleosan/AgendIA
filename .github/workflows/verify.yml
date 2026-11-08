@@ -38,6 +38,8 @@ jobs:
           cache_dependency_path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
+      - name: Verify Fresha coordinator and source checks
+        run: node --test .agents/skills/avanzar/scripts/*.test.mjs
       - name: Prepare verified age for synthetic recovery tests
         run: |
           docker build --target recovery-age -t sarin-recovery-age .

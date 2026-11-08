@@ -23,6 +23,8 @@ Lee .agents/skills/avanzar/SKILL.md y continúa el plan de Fresha: reanuda la ta
    node .agents/skills/avanzar/scripts/check-plan.mjs --next
    ```
 
+   Ese mismo comando verifica automáticamente que `workspace.codeRoot` usa el repositorio `andresleosan/SarinBotSAAS`, rama `main`, y que su `HEAD` coincide con el SHA actual de GitHub. Informa ambos commits y los cambios locales sin commit. Si la fuente no coincide o no puede consultarse, no devuelve otra tarea: primero se concilia de forma segura, sin sobrescribir archivos. Una tarea con commit propio pendiente de entrega conserva su continuación; no se cambia el progreso para ocultar la diferencia. No necesitas comparar los commits manualmente.
+
 3. Reanudar `currentTaskId` y su `resume`, o seleccionar exactamente la siguiente tarea elegible. Trabajar el producto en `workspace.codeRoot`, aislado del checkout mixto; el estado continúa solo en `workspace.controlRoot`.
 4. Resolver hechos en código/docs/herramientas; usar brainstorming/grilling para decisiones materiales y writing-plans para el desglose aprobado. Aplicar Superpowers al ejecutar, depurar, revisar y verificar según la tarea.
 5. Tras validar, hacer commit enfocado y entregar a main, sin pedir de nuevo esa autorización ni crear ramas por defecto. Si se requiere PR por protección, completarlo como paso hacia main. Comprobar SHA remoto, CI y despliegue de ese SHA. Guardar evidencia y continuación con revisión atómica del JSON; despejar la tarea actual solo al completar la entrega. Un fallo de commit/push/merge/CI/despliegue conserva el mismo ID y paso pendiente. No copiar el tasks.json mutable al worktree.
